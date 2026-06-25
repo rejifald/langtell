@@ -4,6 +4,7 @@ export type { FuseOptions } from "./fuse.js";
 export { evidenceFromText } from "./text.js";
 export { evidenceFromHtml } from "./html.js";
 export { evidenceFromHeaders } from "./headers.js";
+export { normalizeBCP47, normalizeLanguageCode, primarySubtag } from "./internal/bcp47.js";
 export type {
   AsyncSource,
   Classification,

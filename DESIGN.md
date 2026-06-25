@@ -42,9 +42,25 @@ Producers (each its own subpath, so cost is isolated):
 evidenceFromText(text, candidates?)   // sync, zero-dep  — script + distinctive letters
 evidenceFromHtml(html)                // sync, zero-dep  — <html lang>, meta content-language, og:locale
 evidenceFromHeaders(headers)          // sync, zero-dep  — Content-Language
-evidenceFromFranc(text, candidates)   // sync, pulls franc
-evidenceFromChromeAi(text)            // async, browser-only
+evidenceFromFranc(text, candidates)   // sync, pulls franc (its own subpath)
+chromeAiEngine / createChromeAiEngine // async, browser-only (its own subpath)
 ```
+
+The built-in text producer needs a candidate roster to score against — its
+signals are roster-relative (`і` decides Ukrainian only when Russian is also a
+candidate), so it abstains when none is supplied. `compile({ candidates })`
+binds the roster into the built-in text source for you.
+
+The `franc` and `chrome-ai` engines are surfaced as `EvidenceSource` objects
+(`francEngine`/`createFrancEngine(candidates)`,
+`chromeAiEngine`/`createChromeAiEngine()`) rather than bare functions, because
+they carry bound state (franc's roster scoping, chrome-ai's cached availability
+and session). franc runs in-process and synchronously, so it is a `SyncSource`
+and keeps the compiled `detect` synchronous; chrome-ai is an `AsyncSource`.
+
+Ready-to-use {@link LanguageProfile} data (alphabets, word lists for uk/ru/be/
+bg/en) ships behind the opt-in `langtell/profiles` subpath, never in the core —
+the word corpora would dwarf the script-only core otherwise.
 
 `fuse(evidence, { weights })` does the weighted argmax, normalizes BCP-47 tags
 into the candidate roster, and applies the rule **context must never override

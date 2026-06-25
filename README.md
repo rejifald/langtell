@@ -15,9 +15,10 @@ answer _"what language is this body of text?"_ from the characters alone.
 `langtell` answers _"what language is this **title**, given the page, transport,
 and source it arrived in?"_ — and shows its work.
 
-> **Status:** design preview. The API below is the committed design; the
-> implementation is in progress. This `0.0.x` release reserves the name and
-> documents the design — it has no runtime yet.
+> **Status:** early. The core detector (candidate-relative script/letter
+> scoring, the BCP-47-aware fuser with the context-vs-script guard, and the
+> opt-in franc and Chrome AI engines) is implemented and tested. The API below
+> reflects the committed design.
 
 ## Why
 
@@ -36,9 +37,10 @@ and source it arrived in?"_ — and shows its work.
 
 ```ts
 import { compile } from "langtell";
+import { uk, ru, en } from "langtell/profiles"; // ready-made roster data
 
 // compile() does the per-roster setup once; call the returned fn many times.
-const detect = compile({ candidates: [UK, RU, EN] });
+const detect = compile({ candidates: [uk, ru, en] });
 
 const result = detect({
   text: "Їжак Сонік",
@@ -48,29 +50,46 @@ const result = detect({
 // → { language: "uk", confidence: 0.9x, evidence: [{ kind: "title-script", ... }, ...] }
 ```
 
-Add a heavy engine — it stays behind its own import door, and the return type
-becomes `Promise` automatically because the engine is async:
+Add the franc engine — it stays behind its own import door so its trigram tables
+never reach a bundle that doesn't use it. franc runs in-process and
+synchronously, so `detect` stays synchronous:
 
 ```ts
 import { compile } from "langtell";
-import { francEngine } from "langtell/franc";
+import { uk, ru, en } from "langtell/profiles";
+import { createFrancEngine } from "langtell/franc";
 
-const detect = compile({ candidates: [UK, RU, EN], engines: [francEngine] });
-const result = await detect({ text, html, responseHeaders });
+const candidates = [uk, ru, en];
+const detect = compile({ candidates, engines: [createFrancEngine(candidates)] });
+const result = detect({ text, html, responseHeaders });
+```
+
+Register the on-device Chrome AI engine and the return type becomes `Promise`
+automatically, because that engine is async:
+
+```ts
+import { compile } from "langtell";
+import { uk, ru, en } from "langtell/profiles";
+import { chromeAiEngine } from "langtell/chrome-ai";
+
+const detect = compile({ candidates: [uk, ru, en], engines: [chromeAiEngine] });
+const result = await detect({ text }); // Promise<Classification>
 ```
 
 ## API at a glance
 
-| Export                   | Role                                                                         |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| `compile(config)`        | Build a configured `detect` function (does the precompute once).             |
-| `detect(input)`          | The compiled detector. Sync or `Promise`, by config — see below.             |
-| `evidenceFromText(text)` | Producer: script + distinctive-letter signals. Zero-dep, sync.               |
-| `evidenceFromHtml(html)` | Producer: `<html lang>`, meta content-language, `og:locale`. Zero-dep, sync. |
-| `evidenceFromHeaders(h)` | Producer: HTTP `Content-Language`. Zero-dep, sync.                           |
-| `fuse(evidence, opts?)`  | Weighted blend + "context never overrides clear script" guard.               |
-| `langtell/franc`         | Opt-in franc engine (pulls trigram tables).                                  |
-| `langtell/chrome-ai`     | Opt-in on-device Chrome AI engine (browser).                                 |
+| Export                                | Role                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| `compile(config)`                     | Build a configured `detect` function (does the precompute once).                |
+| `detect(input)`                       | The compiled detector. Sync or `Promise`, by config — see below.                |
+| `evidenceFromText(text, candidates?)` | Producer: roster-relative script + distinctive-letter signals. Zero-dep, sync.  |
+| `evidenceFromHtml(html)`              | Producer: `<html lang>`, meta content-language, `og:locale`. Zero-dep, sync.    |
+| `evidenceFromHeaders(h)`              | Producer: HTTP `Content-Language`. Zero-dep, sync.                              |
+| `normalizeBCP47(tag)`                 | Normalize a BCP-47 tag/alias to a canonical code (`uk-UA`/`ua` → `uk`).         |
+| `fuse(evidence, opts?)`               | Weighted blend + "context never overrides clear script" guard.                  |
+| `langtell/profiles`                   | Ready-made `LanguageProfile` data (uk/ru/be/bg/en). Opt-in (carries word data). |
+| `langtell/franc`                      | Opt-in franc engine (pulls trigram tables). Sync.                               |
+| `langtell/chrome-ai`                  | Opt-in on-device Chrome AI engine (browser). Async.                             |
 
 `detect` returns a plain `Classification` when every registered source is
 synchronous, and `Promise<Classification>` the moment an async engine is in the

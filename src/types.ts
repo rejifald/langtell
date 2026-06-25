@@ -34,13 +34,33 @@ export interface Classification {
   evidence: LanguageEvidence[];
 }
 
-/** A candidate language, used by the text engines for roster-relative scoring. */
+/** A candidate language, used by the text engines for roster-relative scoring.
+ *
+ * Distinctiveness is computed at runtime relative to the active candidate set —
+ * the fields below are raw inputs, never pre-differenced. A minimal profile
+ * (`{ code, alphabet }`) works; the word lists and `iso6393` sharpen accuracy. */
 export interface LanguageProfile {
   code: LanguageCode;
-  /** Lowercased alphabet. */
+  /** Lowercased alphabet. Rung 1 of the classifier. Raw — never pre-differenced. */
   alphabet: string;
-  /** Characters distinctive to this language within a roster (optional hint). */
-  distinctive?: string;
+  /** Orthographic marks that count as rung-1 evidence but are not alphabet
+   *  letters — e.g. the intra-word apostrophe Ukrainian/Belarusian use where
+   *  Russian uses a hard sign or nothing. Merged into the rung-1 character set;
+   *  distinctiveness stays candidate-relative, so a mark shared by ≥2 candidates
+   *  cancels out. Optional. */
+  marks?: string;
+  /** Curated lexical markers, split into two tiers (rungs 2a/2b). Optional — a
+   *  profile with only an `alphabet` still classifies on distinctive letters. */
+  words?: {
+    /** Grammatical markers (conjunctions, prepositions, pronouns, particles),
+     *  hand-auditable. Highest-precision word tier. */
+    function: readonly string[];
+    /** Corpus-frequent content words. Lower-precision backstop. */
+    frequent: readonly string[];
+  };
+  /** ISO 639-3 code, used to scope the optional franc engine's `only`
+   *  restriction. Omit to skip franc for this profile. */
+  iso6393?: string;
 }
 
 export type HeaderBag = Headers | Record<string, string | string[] | undefined | null>;

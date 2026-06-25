@@ -3,16 +3,21 @@
     "name": "core — compile() (proves zero franc bytes)",
     "path": "dist/index.js",
     "import": "{ compile }",
-    "limit": "2 kB"
+    "limit": "3 kB"
   },
   {
     "name": "core — all named exports",
     "path": "dist/index.js",
-    "limit": "2.5 kB"
+    "limit": "3 kB"
   },
   {
     "name": "headers producer",
     "path": "dist/headers.js",
     "limit": "1 kB"
+  },
+  {
+    "name": "profiles data (opt-in subpath — heavy word lists live here, not in core)",
+    "path": "dist/profiles.js",
+    "limit": "12 kB"
   }
 ]

@@ -10,6 +10,7 @@ export default defineConfig({
     text: "src/text.ts",
     html: "src/html.ts",
     headers: "src/headers.ts",
+    profiles: "src/profiles.ts",
     fuse: "src/fuse.ts",
     franc: "src/franc.ts",
     "chrome-ai": "src/chrome-ai.ts",

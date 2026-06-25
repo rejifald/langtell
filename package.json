@@ -46,6 +46,10 @@
       "types": "./dist/headers.d.ts",
       "import": "./dist/headers.js"
     },
+    "./profiles": {
+      "types": "./dist/profiles.d.ts",
+      "import": "./dist/profiles.js"
+    },
     "./fuse": {
       "types": "./dist/fuse.d.ts",
       "import": "./dist/fuse.js"

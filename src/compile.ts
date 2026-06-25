@@ -10,13 +10,21 @@ import type {
   DetectorConfig,
   EvidenceSource,
   LanguageEvidence,
+  LanguageProfile,
   SyncSource,
 } from "./types.js";
 
-/** The always-on, zero-dependency producers. */
-function builtIns(): SyncSource[] {
+/** The always-on, zero-dependency producers. The text producer is bound to the
+ *  configured candidate roster so its scoring is roster-relative (and so it
+ *  abstains when no roster was supplied — its signals need candidates). */
+function builtIns(candidates: readonly LanguageProfile[] | undefined): SyncSource[] {
   return [
-    { id: "text", sync: true, inputs: ["text"], detect: (i) => evidenceFromText(i.text) },
+    {
+      id: "text",
+      sync: true,
+      inputs: ["text"],
+      detect: (i) => evidenceFromText(i.text, candidates),
+    },
     { id: "html", sync: true, inputs: ["html"], detect: (i) => evidenceFromHtml(i.html) },
     {
       id: "headers",
@@ -41,9 +49,10 @@ function applicable(source: EvidenceSource, input: DetectInput): boolean {
 export function compile<const E extends readonly EvidenceSource[] = []>(
   config: DetectorConfig<E> = {},
 ): DetectFn<E> {
-  const sources: EvidenceSource[] = [...builtIns(), ...(config.engines ?? [])];
+  const sources: EvidenceSource[] = [...builtIns(config.candidates), ...(config.engines ?? [])];
   const hasAsync = sources.some((source) => !source.sync);
   const weights = config.weights;
+  const candidates = config.candidates;
 
   if (!hasAsync) {
     const detect = (input: DetectInput): Classification => {
@@ -51,7 +60,7 @@ export function compile<const E extends readonly EvidenceSource[] = []>(
       for (const source of sources) {
         if (source.sync && applicable(source, input)) evidence.push(...source.detect(input));
       }
-      return fuse(evidence, { weights });
+      return fuse(evidence, { weights, candidates });
     };
     return detect as DetectFn<E>;
   }

@@ -1,7 +1,12 @@
-import type { Classification, LanguageEvidence, Weights } from "./types.js";
+import type { Classification, LanguageEvidence, LanguageProfile, Weights } from "./types.js";
+import { normalizeBCP47 } from "./internal/bcp47.js";
 
 export interface FuseOptions {
   weights?: Weights;
+  /** The candidate roster. When present, incoming evidence tags are normalized
+   *  into it (`uk-UA` → `uk`, `ua` → `uk`) so context signals (page/header
+   *  locale) land on the same code the text rungs use. */
+  candidates?: readonly LanguageProfile[];
 }
 
 /** Default per-kind weights. Clear lexical signal (script, explicit locale)
@@ -19,34 +24,132 @@ const DEFAULT_KIND_WEIGHT: Record<string, number> = {
   "html-lang": 0.5,
 };
 
+/** Evidence kinds that constitute *clear script evidence* — a verdict the text
+ *  classifier or an on-device model reached by actually reading the string. The
+ *  guard below forbids weaker page/header *context* from flipping these. */
+const SCRIPT_KINDS = new Set<string>(["title-script", "franc", "chrome-ai"]);
+
+/** A script verdict this confident is treated as settled — context may add to it
+ *  but must not flip the winner to a different language. */
+const SCRIPT_CONFIDENCE_FLOOR = 0.6;
+
 const MIN_WINNING_SCORE = 0.35;
 const MIN_MARGIN = 0.12;
 
 /**
  * Combine evidence into a single weighted verdict with an audit trail.
  *
- * Scaffold: weighted argmax over languages. The "context must never override
- * clear script" guard and BCP-47 roster normalization are ported next; see
- * DESIGN.md.
+ * Three steps:
+ *  1. Normalize each item's language tag into the candidate roster (BCP-47:
+ *     `uk-UA`/`ua` → `uk`) so text, page, and header signals agree on a code.
+ *  2. Weighted argmax over languages (caller weights override per `source`/`kind`).
+ *  3. Apply the guard **context must never override clear script evidence**: when
+ *     the text classifier (or an on-device model) confidently read one language,
+ *     weaker page/header context for a *different* language cannot win — a
+ *     Ukrainian page chrome does not make a Latin/English title Ukrainian.
  */
 export function fuse(
   evidence: readonly LanguageEvidence[],
   options: FuseOptions = {},
 ): Classification {
   const weights = options.weights ?? {};
-  const scores = new Map<string, number>();
+  const normalized = normalizeEvidence(evidence, options.candidates);
 
-  for (const item of evidence) {
+  const scores = new Map<string, number>();
+  for (const item of normalized) {
     if (item.language === "unknown") continue;
     const weight =
       weights[item.source] ?? weights[item.kind] ?? DEFAULT_KIND_WEIGHT[item.kind] ?? 0.5;
     scores.set(item.language, (scores.get(item.language) ?? 0) + clamp01(item.confidence) * weight);
   }
 
+  // The context-vs-script guard: a confident script read pins the winner.
+  const pinned = confidentScriptLanguage(normalized);
+
+  const { best, bestScore, secondScore } = argmax(scores, pinned);
+
+  if (best === null || bestScore < MIN_WINNING_SCORE || bestScore - secondScore < MIN_MARGIN) {
+    // A pinned script language still wins even on a thin margin — clear script
+    // evidence is never demoted to "unknown" by competing context.
+    if (pinned !== null && scores.has(pinned)) {
+      const score = scores.get(pinned) ?? 0;
+      return {
+        language: pinned,
+        confidence: clamp01(score / (score + 0.15)),
+        evidence: [...normalized],
+      };
+    }
+    return { language: "unknown", confidence: clamp01(bestScore), evidence: [...normalized] };
+  }
+
+  return {
+    language: best,
+    confidence: clamp01(bestScore / (bestScore + secondScore + 0.15)),
+    evidence: [...normalized],
+  };
+}
+
+/** Normalize each item's tag into the roster's code space (BCP-47-aware). Items
+ *  already `"unknown"` pass through untouched. Tags are BCP-47-normalized
+ *  (`en-US` → `en`, `ua` → `uk`) so text, page, and header signals land on the
+ *  same code. The normalized code is kept even when it falls outside the roster —
+ *  argmax simply won't favor an out-of-roster context tag, but it stays in the
+ *  audit trail.
+ *
+ *  The roster is accepted (and reserved) so a future revision can fold roster
+ *  aliasing in without a signature change; today BCP-47 normalization alone
+ *  reconciles the codes the producers emit. */
+function normalizeEvidence(
+  evidence: readonly LanguageEvidence[],
+  _candidates: readonly LanguageProfile[] | undefined,
+): LanguageEvidence[] {
+  return evidence.map((item) => {
+    if (item.language === "unknown") return item;
+    const normalized = normalizeBCP47(item.language) ?? item.language;
+    if (normalized === item.language) return item;
+    return { ...item, language: normalized };
+  });
+}
+
+/** The language of a *clear script* read confident enough to pin the verdict, or
+ *  `null` when none qualifies. When two script reads disagree, the higher-
+ *  confidence one pins (a tie leaves nothing pinned — argmax decides normally). */
+function confidentScriptLanguage(evidence: readonly LanguageEvidence[]): string | null {
+  let best: string | null = null;
+  let bestConfidence = 0;
+  for (const item of evidence) {
+    if (item.language === "unknown" || !SCRIPT_KINDS.has(item.kind)) continue;
+    const c = clamp01(item.confidence);
+    if (c < SCRIPT_CONFIDENCE_FLOOR) continue;
+    if (c > bestConfidence) {
+      bestConfidence = c;
+      best = item.language;
+    } else if (c === bestConfidence && item.language !== best) {
+      // Two equally-confident script reads for different languages — ambiguous.
+      best = null;
+    }
+  }
+  return best;
+}
+
+/**
+ * Weighted argmax. When `pinned` is set (a confident script language), any
+ * *other* language's score may only come from context kinds; that score is
+ * capped so it can never exceed the pinned language. This enforces the guard
+ * without discarding the context from the audit trail.
+ */
+function argmax(
+  scores: Map<string, number>,
+  pinned: string | null,
+): { best: string | null; bestScore: number; secondScore: number } {
   let best: string | null = null;
   let bestScore = 0;
   let secondScore = 0;
-  for (const [language, score] of scores) {
+  const pinnedScore = pinned !== null ? (scores.get(pinned) ?? 0) : 0;
+
+  for (const [language, raw] of scores) {
+    // Guard: a non-pinned language cannot out-score the pinned one.
+    const score = pinned !== null && language !== pinned ? Math.min(raw, pinnedScore) : raw;
     if (score > bestScore) {
       secondScore = bestScore;
       bestScore = score;
@@ -55,16 +158,13 @@ export function fuse(
       secondScore = score;
     }
   }
-
-  if (best === null || bestScore < MIN_WINNING_SCORE || bestScore - secondScore < MIN_MARGIN) {
-    return { language: "unknown", confidence: clamp01(bestScore), evidence: [...evidence] };
+  // On a pinned tie (pinned capped equal to a context language), prefer pinned.
+  if (pinned !== null && best !== pinned && bestScore === pinnedScore && pinnedScore > 0) {
+    secondScore = bestScore;
+    best = pinned;
+    bestScore = pinnedScore;
   }
-
-  return {
-    language: best,
-    confidence: clamp01(bestScore / (bestScore + secondScore + 0.15)),
-    evidence: [...evidence],
-  };
+  return { best, bestScore, secondScore };
 }
 
 function clamp01(value: number): number {
