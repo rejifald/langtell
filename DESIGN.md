@@ -157,6 +157,7 @@ One package, isolated entry points:
   "./html":      "./dist/html.js",
   "./headers":   "./dist/headers.js",
   "./fuse":      "./dist/fuse.js",
+  "./classify":  "./dist/classify.js",   // opt-in structured snippet verdict (rung + margin)
   "./franc":     "./dist/franc.js",      // pulls franc trigram tables
   "./chrome-ai": "./dist/chrome-ai.js"   // browser LanguageDetector
 }

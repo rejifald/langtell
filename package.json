@@ -54,6 +54,10 @@
       "types": "./dist/fuse.d.ts",
       "import": "./dist/fuse.js"
     },
+    "./classify": {
+      "types": "./dist/classify.d.ts",
+      "import": "./dist/classify.js"
+    },
     "./franc": {
       "types": "./dist/franc.d.ts",
       "import": "./dist/franc.js"

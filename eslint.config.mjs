@@ -32,6 +32,7 @@ export default tseslint.config(
       "src/html.ts",
       "src/headers.ts",
       "src/types.ts",
+      "src/classify.ts",
     ],
     rules: {
       "no-restricted-imports": [

@@ -76,6 +76,27 @@ const detect = compile({ candidates: [uk, ru, en], engines: [chromeAiEngine] });
 const result = await detect({ text }); // Promise<Classification>
 ```
 
+Need more than "what language + how sure"? The default `Classification` collapses
+the candidate-relative ladder into one `confidence` float. When you need the raw
+structure — _which_ rung decided (distinctive letters → function words → frequent
+words → optional trigram backstop) and the integer **margin** (the winner's lead
+over the runner-up) — reach for the opt-in `langtell/classify` door. It stays
+zero-dependency and franc-free; scoring is relative to the roster you pass in.
+
+```ts
+import { classifyBySnippet } from "langtell/classify";
+import { uk, ru } from "langtell/profiles";
+
+classifyBySnippet("Слава Україні", [uk, ru]);
+// → { language: "uk", margin: 2, rung: 1, discriminating: true }  (a distinctive letter)
+classifyBySnippet("Кофе и чай", [uk, ru]);
+// → { language: "ru", margin: 1, rung: "2a", … }                  (a function-word marker)
+```
+
+This powers per-rung safety gates ("act only when a _weak_ rung clears a high
+margin") and diagnostics — uses a single confidence number can't serve. The
+high-level `compile`/`detect`/`fuse` output is unchanged; this is purely additive.
+
 ## API at a glance
 
 | Export                                | Role                                                                            |
@@ -88,6 +109,7 @@ const result = await detect({ text }); // Promise<Classification>
 | `normalizeBCP47(tag)`                 | Normalize a BCP-47 tag/alias to a canonical code (`uk-UA`/`ua` → `uk`).         |
 | `fuse(evidence, opts?)`               | Weighted blend + "context never overrides clear script" guard.                  |
 | `langtell/profiles`                   | Ready-made `LanguageProfile` data (uk/ru/be/bg/en). Opt-in (carries word data). |
+| `langtell/classify`                   | Opt-in structured snippet verdict (`{ language, margin, rung }`). Zero-dep.     |
 | `langtell/franc`                      | Opt-in franc engine (pulls trigram tables). Sync.                               |
 | `langtell/chrome-ai`                  | Opt-in on-device Chrome AI engine (browser). Async.                             |
 

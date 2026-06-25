@@ -249,6 +249,18 @@ export { uk, ru, be, bg, en };
 /** Registry of shipped profiles, keyed by BCP-47 code. */
 export const PROFILES: Readonly<Record<LanguageCode, LanguageProfile>> = { uk, ru, be, bg, en };
 
+/** BCP-47 codes for which langtell ships a ready-made {@link LanguageProfile}.
+ *  Handy for narrowing a caller's roster to codes that can actually classify —
+ *  e.g. `codes.filter(hasProfile)`. Derived from {@link PROFILES}. */
+export const PROFILED_CODES: readonly LanguageCode[] = Object.keys(PROFILES);
+
+/** Whether langtell ships a ready-made {@link LanguageProfile} for `code`. An
+ *  own-property check, so inherited names (`"toString"`, `"constructor"`) read
+ *  as absent. */
+export function hasProfile(code: LanguageCode): boolean {
+  return Object.prototype.hasOwnProperty.call(PROFILES, code);
+}
+
 /** Resolve profiles for the given codes, skipping any without a shipped profile. */
 export function getProfiles(codes: readonly LanguageCode[]): LanguageProfile[] {
   return codes.map((c) => PROFILES[c]).filter((p): p is LanguageProfile => p !== undefined);
