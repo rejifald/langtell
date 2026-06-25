@@ -12,6 +12,7 @@ export default defineConfig({
     headers: "src/headers.ts",
     profiles: "src/profiles.ts",
     fuse: "src/fuse.ts",
+    classify: "src/classify.ts",
     franc: "src/franc.ts",
     "chrome-ai": "src/chrome-ai.ts",
   },

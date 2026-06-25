@@ -19,5 +19,11 @@
     "name": "profiles data (opt-in subpath — heavy word lists live here, not in core)",
     "path": "dist/profiles.js",
     "limit": "12 kB"
+  },
+  {
+    "name": "classify verdict (opt-in subpath — franc-free, no profile data)",
+    "path": "dist/classify.js",
+    "import": "{ classifyBySnippet }",
+    "limit": "2 kB"
   }
 ]
