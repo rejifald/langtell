@@ -11,7 +11,12 @@
   },
   "homepage": "https://github.com/rejifald/langtell#readme",
   "bugs": "https://github.com/rejifald/langtell/issues",
+  "packageManager": "pnpm@10.33.2",
   "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=20"
   },
@@ -74,6 +79,9 @@
     "attw": "attw --pack . --profile esm-only",
     "size": "size-limit",
     "package:check": "pnpm run publint && pnpm run attw",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm run build && changeset publish",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test && pnpm run build",
     "verify": "pnpm run check && pnpm run package:check && pnpm run size",
     "prepare": "lefthook install",
@@ -89,6 +97,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.2",
+    "@changesets/cli": "^2.29.7",
     "@eslint/js": "^9.39.4",
     "@size-limit/preset-small-lib": "^11.2.0",
     "@types/node": "^22.10.0",
@@ -103,5 +112,11 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.0",
     "vitest": "^4.1.7"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "lefthook"
+    ]
   }
 }

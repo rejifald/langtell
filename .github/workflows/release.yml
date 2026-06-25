@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# `id-token: write` enables npm trusted publishing (OIDC) + provenance — no
+# stored npm token. `contents`/`pull-requests: write` let Changesets open and
+# merge the "Version Packages" PR.
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; node 22 ships an older npm.
+      - run: npm install --global npm@latest
+      - uses: changesets/action@v1
+        with:
+          version: pnpm run version-packages
+          publish: pnpm run release
+          commit: "chore(release): version packages"
+          title: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Token-based fallback (only if OIDC trusted publishing is not configured):
+          # NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
