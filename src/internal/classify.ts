@@ -37,9 +37,25 @@ export interface SnippetVerdict {
   margin: number;
   /** Which rung decided; `null` when unknown. */
   rung: Rung;
+  /** Whether ≥2 same-script candidates were in scope when the verdict was
+   *  reached. `true` ⇒ the distinctive-letter/word machinery actually chose
+   *  between candidates; `false` ⇒ the winner was the lone candidate in its
+   *  script, selected by script alone (no evidence it is *distinctively* that
+   *  language). `false` for `"unknown"`. */
+  discriminating: boolean;
 }
 
-const UNKNOWN: SnippetVerdict = { language: "unknown", margin: 0, rung: null };
+/** A rung's verdict before {@link classifyBySnippet} stamps on the scope-derived
+ *  `discriminating` flag (which a single rung can't know — it depends on how many
+ *  same-script candidates were scoped). */
+export type RungVerdict = Pick<SnippetVerdict, "language" | "margin" | "rung">;
+
+const UNKNOWN: SnippetVerdict = {
+  language: "unknown",
+  margin: 0,
+  rung: null,
+  discriminating: false,
+};
 
 /** Resolver for rung 3 (the optional trigram backstop), injected into
  *  {@link classifyBySnippet} by callers that have franc available. Kept as an
@@ -49,7 +65,7 @@ const UNKNOWN: SnippetVerdict = { language: "unknown", margin: 0, rung: null };
 export type Rung3Resolver = (
   text: string,
   scoped: readonly LanguageProfile[],
-) => SnippetVerdict | null;
+) => RungVerdict | null;
 
 const CYRILLIC_RE = /\p{Script=Cyrillic}/u;
 const LATIN_RE = /\p{Script=Latin}/u;
@@ -214,7 +230,7 @@ function membershipFor(
 
 /** Rung 1 — characters (alphabet + orthographic {@link LanguageProfile.marks})
  *  distinctive within the scoped candidate set. */
-function letterRung(text: string, scoped: readonly LanguageProfile[]): SnippetVerdict | null {
+function letterRung(text: string, scoped: readonly LanguageProfile[]): RungVerdict | null {
   const r = leader(
     tally(
       text.toLowerCase(),
@@ -230,7 +246,7 @@ function wordRung(
   scoped: readonly LanguageProfile[],
   tier: "function" | "frequent",
   rung: "2a" | "2b",
-): SnippetVerdict | null {
+): RungVerdict | null {
   const r = leader(
     tally(
       tokens,
@@ -260,16 +276,20 @@ export function classifyBySnippet(
   const scoped = scopeCandidates(cleaned, candidates);
   if (scoped.length === 0) return UNKNOWN;
 
+  // ≥2 same-script candidates means the distinctive machinery actually had a
+  // choice to make; a lone scoped candidate wins by script alone. Stamped onto
+  // whichever rung decides — a single rung can't see the scope size.
+  const discriminating = scoped.length >= 2;
+
   const byLetter = letterRung(cleaned, scoped);
-  if (byLetter) return byLetter;
+  if (byLetter) return { ...byLetter, discriminating };
 
   const tokens = tokenize(cleaned);
   if (tokens.length === 0) return UNKNOWN;
 
-  return (
+  const byWord =
     wordRung(tokens, scoped, "function", "2a") ??
     wordRung(tokens, scoped, "frequent", "2b") ??
-    rung3?.(cleaned, scoped) ??
-    UNKNOWN
-  );
+    rung3?.(cleaned, scoped);
+  return byWord ? { ...byWord, discriminating } : UNKNOWN;
 }

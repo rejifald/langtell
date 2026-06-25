@@ -20,6 +20,7 @@ export type {
   LanguageCode,
   LanguageEvidence,
   LanguageProfile,
+  NonDiscriminatingScript,
   SourceInput,
   SyncSource,
   Weights,

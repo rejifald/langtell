@@ -29,7 +29,35 @@ describe("classifyBySnippet — reports the deciding rung and margin", () => {
   });
 
   it("unknown carries margin 0 and null rung", () => {
-    expect(classifyBySnippet("", [uk, ru])).toEqual({ language: "unknown", margin: 0, rung: null });
+    expect(classifyBySnippet("", [uk, ru])).toEqual({
+      language: "unknown",
+      margin: 0,
+      rung: null,
+      discriminating: false,
+    });
+  });
+});
+
+describe("classifyBySnippet — discriminating flag (≥2 same-script candidates)", () => {
+  it("a ≥2-candidate verdict is discriminating", () => {
+    expect(classifyBySnippet("Слава Україні", [uk, ru])).toMatchObject({
+      language: "uk",
+      discriminating: true,
+    });
+  });
+
+  it("a lone-candidate-in-script verdict is non-discriminating (Latin)", () => {
+    expect(classifyBySnippet("Inception", [uk, en])).toMatchObject({
+      language: "en",
+      discriminating: false,
+    });
+  });
+
+  it("the lone-candidate rule is symmetric across scripts (Cyrillic)", () => {
+    expect(classifyBySnippet("Інкі", [uk, en])).toMatchObject({
+      language: "uk",
+      discriminating: false,
+    });
   });
 });
 

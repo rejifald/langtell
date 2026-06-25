@@ -66,6 +66,16 @@ the word corpora would dwarf the script-only core otherwise.
 into the candidate roster, and applies the rule **context must never override
 clear script evidence** (a Ukrainian page does not make a Latin title Ukrainian).
 
+Its inverse is opt-in. When a roster is closed and one script has a single owner
+(`en` is the only Latin candidate in `[uk, en]`), the script _picked_ that
+candidate without discriminating between any — so the text producer flags the
+read `discriminating: false`. `fuse(evidence, { nonDiscriminatingScript: "unknown" })`
+(also exposed as a `compile` option) then resolves such a read to `unknown`
+unless non-script evidence — a page tag, a `Content-Language` header —
+corroborates the same language. The default stays `"candidate"`: the lone
+candidate stands, so behavior is unchanged unless a caller opts in to the
+roster-closed, evidence-only policy.
+
 ## `compile` → `detect`
 
 `compile(config)` is a factory in the `ajv.compile(schema) → validate` mold: it

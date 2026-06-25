@@ -156,6 +156,24 @@ describe("evidenceFromText — unknown abstains", () => {
   });
 });
 
+describe("evidenceFromText — non-discriminating script flag", () => {
+  it("flags a lone-Latin-candidate read (en is the only Latin option)", () => {
+    const ev = evidenceFromText("Inception", [uk, en]);
+    expect(ev[0]).toMatchObject({ language: "en", discriminating: false });
+  });
+
+  it("omits the flag when ≥2 same-script candidates were in play", () => {
+    const ev = evidenceFromText("Слава Україні", [uk, ru]);
+    expect(ev[0]?.language).toBe("uk");
+    expect(ev[0]?.discriminating).toBeUndefined();
+  });
+
+  it("flags a lone-Cyrillic-candidate read too (symmetric)", () => {
+    const ev = evidenceFromText("Інкі", [uk, en]);
+    expect(ev[0]).toMatchObject({ language: "uk", discriminating: false });
+  });
+});
+
 describe("evidenceFromText — dominant-script scoping", () => {
   it("a Latin brand name in a Cyrillic title does not tip to en", () => {
     expect(lang("Всё о коде на YouTube", [uk, ru, en])).toBe("ru");
