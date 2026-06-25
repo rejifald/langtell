@@ -28,15 +28,18 @@ export function evidenceFromText(
   const verdict = classifyBySnippet(text, candidates, rung3);
   if (verdict.language === "unknown") return [];
 
-  return [
-    {
-      kind: "title-script",
-      language: verdict.language,
-      confidence: marginToConfidence(verdict.margin, verdict.rung),
-      source: "title-script",
-      value: text.trim().slice(0, 80),
-    },
-  ];
+  const item: LanguageEvidence = {
+    kind: "title-script",
+    language: verdict.language,
+    confidence: marginToConfidence(verdict.margin, verdict.rung),
+    source: "title-script",
+    value: text.trim().slice(0, 80),
+  };
+  // Surface only the meaningful negative: the script was owned by ≤1 candidate,
+  // so it didn't choose between candidates. The discriminating case stays narrow
+  // (flag omitted). `fuse({ nonDiscriminatingScript: "unknown" })` reads this.
+  if (!verdict.discriminating) item.discriminating = false;
+  return [item];
 }
 
 /**

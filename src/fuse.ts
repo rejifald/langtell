@@ -1,4 +1,10 @@
-import type { Classification, LanguageEvidence, LanguageProfile, Weights } from "./types.js";
+import type {
+  Classification,
+  LanguageEvidence,
+  LanguageProfile,
+  NonDiscriminatingScript,
+  Weights,
+} from "./types.js";
 import { normalizeBCP47 } from "./internal/bcp47.js";
 
 export interface FuseOptions {
@@ -7,6 +13,12 @@ export interface FuseOptions {
    *  into it (`uk-UA` → `uk`, `ua` → `uk`) so context signals (page/header
    *  locale) land on the same code the text rungs use. */
   candidates?: readonly LanguageProfile[];
+  /** How to resolve a *non-discriminating* script read (one flagged
+   *  `discriminating: false` — its winning script owned by ≤1 roster candidate).
+   *  Default `"candidate"` keeps current behavior; `"unknown"` drops such a read
+   *  unless non-script evidence corroborates the same language. See
+   *  {@link NonDiscriminatingScript}. */
+  nonDiscriminatingScript?: NonDiscriminatingScript;
 }
 
 /** Default per-kind weights. Clear lexical signal (script, explicit locale)
@@ -55,8 +67,16 @@ export function fuse(
   const weights = options.weights ?? {};
   const normalized = normalizeEvidence(evidence, options.candidates);
 
+  // Under `"unknown"`, a non-discriminating script read scores nothing on its own
+  // — it's dropped from the tally and the pin below — but stays in the trail. The
+  // full `normalized` set is still returned as evidence.
+  const scoring =
+    options.nonDiscriminatingScript === "unknown"
+      ? normalized.filter((item) => !isNeutralized(item, normalized))
+      : normalized;
+
   const scores = new Map<string, number>();
-  for (const item of normalized) {
+  for (const item of scoring) {
     if (item.language === "unknown") continue;
     const weight =
       weights[item.source] ?? weights[item.kind] ?? DEFAULT_KIND_WEIGHT[item.kind] ?? 0.5;
@@ -64,7 +84,7 @@ export function fuse(
   }
 
   // The context-vs-script guard: a confident script read pins the winner.
-  const pinned = confidentScriptLanguage(normalized);
+  const pinned = confidentScriptLanguage(scoring);
 
   const { best, bestScore, secondScore } = argmax(scores, pinned);
 
@@ -109,6 +129,24 @@ function normalizeEvidence(
     if (normalized === item.language) return item;
     return { ...item, language: normalized };
   });
+}
+
+/**
+ * Whether a non-discriminating script read should score nothing (mode
+ * `"unknown"`). True when `item` is a script kind flagged `discriminating:
+ * false` (its winning script is owned by ≤1 roster candidate) AND no *non-script*
+ * evidence corroborates its language. Corroboration must come from context kinds
+ * (page tags, headers): two lone-candidate script reads agreeing is still two
+ * defaults, not real evidence — so script kinds never corroborate one another.
+ */
+function isNeutralized(item: LanguageEvidence, all: readonly LanguageEvidence[]): boolean {
+  if (item.discriminating !== false || !SCRIPT_KINDS.has(item.kind)) return false;
+  return !all.some(
+    (other) =>
+      other.language === item.language &&
+      other.language !== "unknown" &&
+      !SCRIPT_KINDS.has(other.kind),
+  );
 }
 
 /** The language of a *clear script* read confident enough to pin the verdict, or

@@ -49,6 +49,32 @@ describe("compile (text + roster, end to end)", () => {
   });
 });
 
+describe("compile — nonDiscriminatingScript: 'unknown' (issue #2)", () => {
+  it("a Latin-only title with no other en evidence → unknown", () => {
+    const detect = compile({ candidates: [uk, en], nonDiscriminatingScript: "unknown" });
+    expect(detect({ text: "Inception" }).language).toBe("unknown");
+    expect(detect({ text: "Der Untergang" }).language).toBe("unknown");
+    expect(detect({ text: "XYZ123" }).language).toBe("unknown");
+  });
+
+  it("a Latin title WITH a corroborating en Content-Language → still en", () => {
+    const detect = compile({ candidates: [uk, en], nonDiscriminatingScript: "unknown" });
+    const result = detect({ text: "Inception", headers: { "content-language": "en" } });
+    expect(result.language).toBe("en");
+  });
+
+  it("Cyrillic uk/ru disambiguation is unchanged with the option on", () => {
+    const detect = compile({ candidates: [uk, ru, en], nonDiscriminatingScript: "unknown" });
+    expect(detect({ text: "Слава Україні" }).language).toBe("uk");
+    expect(detect({ text: "работа" }).language).toBe("ru");
+  });
+
+  it("the default (no option) still names the lone candidate", () => {
+    const detect = compile({ candidates: [uk, en] });
+    expect(detect({ text: "Inception" }).language).toBe("en");
+  });
+});
+
 describe("compile (async path)", () => {
   it("returns a Promise once an async engine is registered", async () => {
     const detect = compile({ engines: [chromeAiEngine] });

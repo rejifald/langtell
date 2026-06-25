@@ -1,7 +1,7 @@
 import { evidenceFromHeaders } from "./headers.js";
 import { evidenceFromHtml } from "./html.js";
 import { evidenceFromText } from "./text.js";
-import { fuse } from "./fuse.js";
+import { fuse, type FuseOptions } from "./fuse.js";
 import type {
   Classification,
   DetectContext,
@@ -51,8 +51,11 @@ export function compile<const E extends readonly EvidenceSource[] = []>(
 ): DetectFn<E> {
   const sources: EvidenceSource[] = [...builtIns(config.candidates), ...(config.engines ?? [])];
   const hasAsync = sources.some((source) => !source.sync);
-  const weights = config.weights;
-  const candidates = config.candidates;
+  const fuseOptions: FuseOptions = {
+    weights: config.weights,
+    candidates: config.candidates,
+    nonDiscriminatingScript: config.nonDiscriminatingScript,
+  };
 
   if (!hasAsync) {
     const detect = (input: DetectInput): Classification => {
@@ -60,7 +63,7 @@ export function compile<const E extends readonly EvidenceSource[] = []>(
       for (const source of sources) {
         if (source.sync && applicable(source, input)) evidence.push(...source.detect(input));
       }
-      return fuse(evidence, { weights, candidates });
+      return fuse(evidence, fuseOptions);
     };
     return detect as DetectFn<E>;
   }
@@ -74,7 +77,7 @@ export function compile<const E extends readonly EvidenceSource[] = []>(
       else pending.push(Promise.resolve(source.detect(input, ctx)).catch(() => []));
     }
     for (const batch of await Promise.all(pending)) evidence.push(...batch);
-    return fuse(evidence, { weights });
+    return fuse(evidence, fuseOptions);
   };
   return detect as DetectFn<E>;
 }

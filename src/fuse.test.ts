@@ -144,3 +144,73 @@ describe("fuse — context must never override clear script evidence", () => {
     expect(fuse(evidence).language).toBe("uk");
   });
 });
+
+describe("fuse — nonDiscriminatingScript (the inverse of the script guard)", () => {
+  /** A lone-Latin-candidate read: the script chose `en` only because it was the
+   *  one Latin option, so it carries `discriminating: false`. */
+  const loneLatin: LanguageEvidence = {
+    kind: "title-script",
+    language: "en",
+    confidence: 0.95,
+    source: "title-script",
+    value: "Inception",
+    discriminating: false,
+  };
+
+  it("default keeps the lone candidate (behavior unchanged)", () => {
+    expect(fuse([loneLatin]).language).toBe("en");
+    expect(fuse([loneLatin], { nonDiscriminatingScript: "candidate" }).language).toBe("en");
+  });
+
+  it("'unknown' resolves an uncorroborated non-discriminating read to unknown", () => {
+    const result = fuse([loneLatin], { nonDiscriminatingScript: "unknown" });
+    expect(result.language).toBe("unknown");
+    // The read is dropped from scoring but stays in the audit trail.
+    expect(result.evidence).toHaveLength(1);
+    expect(result.evidence[0]).toMatchObject({ kind: "title-script", discriminating: false });
+  });
+
+  it("'unknown' keeps the language when non-script evidence corroborates it", () => {
+    const evidence: LanguageEvidence[] = [
+      loneLatin,
+      {
+        kind: "http-content-language",
+        language: "en",
+        confidence: 0.8,
+        source: "http-content-language",
+        value: "en",
+      },
+    ];
+    expect(fuse(evidence, { nonDiscriminatingScript: "unknown" }).language).toBe("en");
+  });
+
+  it("'unknown' does NOT let another lone-candidate script read corroborate", () => {
+    // Two script reads agreeing is still two lone-candidate defaults, not real
+    // evidence — so franc (also non-discriminating) must not rescue the verdict.
+    const evidence: LanguageEvidence[] = [
+      loneLatin,
+      {
+        kind: "franc",
+        language: "en",
+        confidence: 0.6,
+        source: "franc",
+        value: "en",
+        discriminating: false,
+      },
+    ];
+    expect(fuse(evidence, { nonDiscriminatingScript: "unknown" }).language).toBe("unknown");
+  });
+
+  it("'unknown' leaves a discriminating script read (≥2 candidates) untouched", () => {
+    const discriminating: LanguageEvidence[] = [
+      {
+        kind: "title-script",
+        language: "uk",
+        confidence: 0.9,
+        source: "title-script",
+        value: "Слава",
+      },
+    ];
+    expect(fuse(discriminating, { nonDiscriminatingScript: "unknown" }).language).toBe("uk");
+  });
+});

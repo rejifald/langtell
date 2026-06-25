@@ -24,6 +24,13 @@ export interface LanguageEvidence {
   source: string;
   /** The raw signal value, for debugging the verdict. */
   value: string;
+  /** Set to `false` on a script read whose winning script is owned by ≤1 roster
+   *  candidate — the script alone selected the language (a lone-candidate
+   *  default), not the distinctive-letter/word machinery, so the read carries no
+   *  evidence that the text is *distinctively* that language. Omitted (treated as
+   *  discriminating) when ≥2 same-script candidates were in play. Consumed by
+   *  {@link fuse}'s `nonDiscriminatingScript` option; otherwise informational. */
+  discriminating?: boolean;
 }
 
 /** The verdict: the winning language, a confidence, and the evidence behind it. */
@@ -104,6 +111,19 @@ export type HasAsync<E extends readonly EvidenceSource[]> =
 /** Weights keyed by evidence `source` id or `kind`; missing keys use defaults. */
 export type Weights = Partial<Record<string, number>>;
 
+/** How {@link fuse} resolves a *non-discriminating* script read — one whose
+ *  winning script is owned by ≤1 roster candidate, so the script alone (not the
+ *  distinctive-signal machinery) picked the language:
+ *
+ *  - `"candidate"` (default) keeps the lone candidate, preserving today's
+ *    behavior: a closed roster where the script is taken to imply the language.
+ *  - `"unknown"` drops such a read from the verdict *unless* non-script evidence
+ *    (a page tag, a `Content-Language` header) corroborates the same language —
+ *    the conservative "name a language only on real evidence" policy. In a
+ *    `[uk, en]` roster a Latin-only title then resolves to `unknown`, while a
+ *    Latin title plus an explicit `en` `Content-Language` stays `en`. */
+export type NonDiscriminatingScript = "candidate" | "unknown";
+
 export interface EarlyExit {
   /** Stop running further (cheaper-first) sources once confidence clears this. */
   minConfidence: number;
@@ -114,6 +134,10 @@ export interface DetectorConfig<E extends readonly EvidenceSource[] = []> {
   engines?: E;
   weights?: Weights;
   earlyExit?: EarlyExit;
+  /** Forwarded to {@link fuse}. See {@link NonDiscriminatingScript}. Defaults to
+   *  `"candidate"` (current behavior); opt into `"unknown"` for a roster-closed,
+   *  evidence-only policy. */
+  nonDiscriminatingScript?: NonDiscriminatingScript;
 }
 
 /** The compiled detector. Synchronous when every source is sync; `Promise`-typed
