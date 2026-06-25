@@ -1,0 +1,21 @@
+{
+  "name": "langtell",
+  "version": "0.0.0",
+  "description": "Tell me the language — evidence-fusion language detection for short strings, with an auditable confidence trail.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "sideEffects": false,
+  "keywords": [
+    "language",
+    "language-detection",
+    "language-identification",
+    "i18n",
+    "locale",
+    "bcp47",
+    "script-detection"
+  ],
+  "files": [
+    "dist"
+  ]
+}
