@@ -1,0 +1,22 @@
+# Git hooks for langtell. Installed automatically via the `prepare` script
+# (`lefthook install`) on `pnpm install`.
+
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      glob: "*.{ts,mjs,cjs,js,json,md,yml,yaml}"
+      run: pnpm exec prettier --write {staged_files}
+      stage_fixed: true
+    lint:
+      glob: "*.{ts,mjs,cjs,js}"
+      run: pnpm exec eslint --fix {staged_files}
+      stage_fixed: true
+
+pre-push:
+  commands:
+    check:
+      # Fast local gate: typecheck + lint + format:check + test + build.
+      # The heavier package-correctness gates (publint, attw, size-limit) run in
+      # CI — not on every push — so pushing stays quick.
+      run: pnpm run check

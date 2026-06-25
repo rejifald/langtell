@@ -70,8 +70,14 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "quality": "fallow audit --base main",
+    "publint": "publint",
+    "attw": "attw --pack . --profile esm-only",
+    "size": "size-limit",
+    "package:check": "pnpm run publint && pnpm run attw",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test && pnpm run build",
-    "prepublishOnly": "pnpm run check"
+    "verify": "pnpm run check && pnpm run package:check && pnpm run size",
+    "prepare": "lefthook install",
+    "prepublishOnly": "pnpm run verify"
   },
   "peerDependencies": {
     "franc": "^6.2.0"
@@ -82,12 +88,17 @@
     }
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
     "@eslint/js": "^9.39.4",
+    "@size-limit/preset-small-lib": "^11.2.0",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.1.7",
     "eslint": "^9.39.4",
     "fallow": "^2.79.0",
+    "lefthook": "^1.13.6",
     "prettier": "^3.8.3",
+    "publint": "^0.3.16",
+    "size-limit": "^11.2.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.0",

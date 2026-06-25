@@ -1,0 +1,18 @@
+[
+  {
+    "name": "core — compile() (proves zero franc bytes)",
+    "path": "dist/index.js",
+    "import": "{ compile }",
+    "limit": "2 kB"
+  },
+  {
+    "name": "core — all named exports",
+    "path": "dist/index.js",
+    "limit": "2.5 kB"
+  },
+  {
+    "name": "headers producer",
+    "path": "dist/headers.js",
+    "limit": "1 kB"
+  }
+]
