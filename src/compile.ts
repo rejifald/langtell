@@ -1,0 +1,71 @@
+import { evidenceFromHeaders } from "./headers.js";
+import { evidenceFromHtml } from "./html.js";
+import { evidenceFromText } from "./text.js";
+import { fuse } from "./fuse.js";
+import type {
+  Classification,
+  DetectContext,
+  DetectFn,
+  DetectInput,
+  DetectorConfig,
+  EvidenceSource,
+  LanguageEvidence,
+  SyncSource,
+} from "./types.js";
+
+/** The always-on, zero-dependency producers. */
+function builtIns(): SyncSource[] {
+  return [
+    { id: "text", sync: true, inputs: ["text"], detect: (i) => evidenceFromText(i.text) },
+    { id: "html", sync: true, inputs: ["html"], detect: (i) => evidenceFromHtml(i.html) },
+    {
+      id: "headers",
+      sync: true,
+      inputs: ["headers"],
+      detect: (i) => evidenceFromHeaders(i.headers),
+    },
+  ];
+}
+
+/** Run a source only when every input it declares is present. */
+function applicable(source: EvidenceSource, input: DetectInput): boolean {
+  return source.inputs.every((key) => input[key] !== undefined);
+}
+
+/**
+ * Build a configured detector. Does the per-roster setup once and returns a
+ * `detect` function whose sync/async shape is fixed by the registered engines
+ * (see {@link DetectFn}). The built-in producers are always registered; opt-in
+ * engines (franc, chrome-ai) are added via `config.engines`.
+ */
+export function compile<const E extends readonly EvidenceSource[] = []>(
+  config: DetectorConfig<E> = {},
+): DetectFn<E> {
+  const sources: EvidenceSource[] = [...builtIns(), ...(config.engines ?? [])];
+  const hasAsync = sources.some((source) => !source.sync);
+  const weights = config.weights;
+
+  if (!hasAsync) {
+    const detect = (input: DetectInput): Classification => {
+      const evidence: LanguageEvidence[] = [];
+      for (const source of sources) {
+        if (source.sync && applicable(source, input)) evidence.push(...source.detect(input));
+      }
+      return fuse(evidence, { weights });
+    };
+    return detect as DetectFn<E>;
+  }
+
+  const detect = async (input: DetectInput, ctx: DetectContext = {}): Promise<Classification> => {
+    const evidence: LanguageEvidence[] = [];
+    const pending: Promise<LanguageEvidence[]>[] = [];
+    for (const source of sources) {
+      if (!applicable(source, input)) continue;
+      if (source.sync) evidence.push(...source.detect(input));
+      else pending.push(Promise.resolve(source.detect(input, ctx)).catch(() => []));
+    }
+    for (const batch of await Promise.all(pending)) evidence.push(...batch);
+    return fuse(evidence, { weights });
+  };
+  return detect as DetectFn<E>;
+}

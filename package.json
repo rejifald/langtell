@@ -1,11 +1,20 @@
 {
   "name": "langtell",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Tell me the language — evidence-fusion language detection for short strings, with an auditable confidence trail.",
   "type": "module",
-  "private": true,
   "license": "MIT",
+  "author": "Oleksandr Zhuravlov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rejifald/langtell.git"
+  },
+  "homepage": "https://github.com/rejifald/langtell#readme",
+  "bugs": "https://github.com/rejifald/langtell/issues",
   "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
   "keywords": [
     "language",
     "language-detection",
@@ -15,7 +24,73 @@
     "bcp47",
     "script-detection"
   ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./text": {
+      "types": "./dist/text.d.ts",
+      "import": "./dist/text.js"
+    },
+    "./html": {
+      "types": "./dist/html.d.ts",
+      "import": "./dist/html.js"
+    },
+    "./headers": {
+      "types": "./dist/headers.d.ts",
+      "import": "./dist/headers.js"
+    },
+    "./fuse": {
+      "types": "./dist/fuse.d.ts",
+      "import": "./dist/fuse.js"
+    },
+    "./franc": {
+      "types": "./dist/franc.d.ts",
+      "import": "./dist/franc.js"
+    },
+    "./chrome-ai": {
+      "types": "./dist/chrome-ai.d.ts",
+      "import": "./dist/chrome-ai.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist"
-  ]
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "quality": "fallow audit --base main",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test && pnpm run build",
+    "prepublishOnly": "pnpm run check"
+  },
+  "peerDependencies": {
+    "franc": "^6.2.0"
+  },
+  "peerDependenciesMeta": {
+    "franc": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^4.1.7",
+    "eslint": "^9.39.4",
+    "fallow": "^2.79.0",
+    "prettier": "^3.8.3",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^4.1.7"
+  }
 }

@@ -20,13 +20,13 @@ Every signal source is an **evidence producer** that emits
 evidence into one weighted `Classification` with an audit trail.
 
 ```ts
-type LanguageCode = string;                       // BCP-47; 'unknown' is a sentinel
+type LanguageCode = string; // BCP-47; 'unknown' is a sentinel
 
 interface LanguageEvidence {
-  kind: EvidenceKind;                             // 'title-script' | 'html-lang' | 'http-content-language' | 'source-prior' | 'franc' | ...
+  kind: EvidenceKind; // 'title-script' | 'html-lang' | 'http-content-language' | 'source-prior' | 'franc' | ...
   language: LanguageCode | "unknown";
-  confidence: number;                             // 0..1
-  value: string;                                  // the raw signal, for the audit trail
+  confidence: number; // 0..1
+  value: string; // the raw signal, for the audit trail
 }
 
 interface Classification {
@@ -70,11 +70,17 @@ engine tuple, and `detect`'s return type is conditional on whether any async
 engine was registered:
 
 ```ts
-interface SyncSource  { readonly id: string; readonly sync: true;
-  detect(input: DetectInput): LanguageEvidence[] }
-interface AsyncSource { readonly id: string; readonly sync: false;
+interface SyncSource {
+  readonly id: string;
+  readonly sync: true;
+  detect(input: DetectInput): LanguageEvidence[];
+}
+interface AsyncSource {
+  readonly id: string;
+  readonly sync: false;
   isAvailable?(): boolean | Promise<boolean>;
-  detect(input: DetectInput, ctx: DetectContext): Promise<LanguageEvidence[]> }
+  detect(input: DetectInput, ctx: DetectContext): Promise<LanguageEvidence[]>;
+}
 type EvidenceSource = SyncSource | AsyncSource;
 
 type HasAsync<E extends readonly EvidenceSource[]> =
@@ -144,16 +150,16 @@ Hard rules that make this real:
 Consumers choose ergonomics at the import site, at zero runtime cost:
 
 ```ts
-import { compile }              from "langtell";          // bare
-import * as langtell            from "langtell";          // namespaced: langtell.compile(...)
-import { compile as compileLD } from "langtell";          // renamed inline
-import { francEngine }          from "langtell/franc";    // heavy — its own door
+import { compile } from "langtell"; // bare
+import * as langtell from "langtell"; // namespaced: langtell.compile(...)
+import { compile as compileLD } from "langtell"; // renamed inline
+import { francEngine } from "langtell/franc"; // heavy — its own door
 ```
 
 ## Naming
 
-`langtell` — the package's job is its name: *"tell me the language of this
-string."* It also reads the *tells* (script, tags, headers — the giveaway
+`langtell` — the package's job is its name: _"tell me the language of this
+string."_ It also reads the _tells_ (script, tags, headers — the giveaway
 signals). The `lang` prefix supplies the domain that a bare brand would omit; the
 name is two plain monosyllables, easy to say and type.
 

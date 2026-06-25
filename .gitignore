@@ -1,6 +1,9 @@
 node_modules/
 dist/
 coverage/
+.fallow/
+*.tsbuildinfo
+.eslintcache
 *.log
 .DS_Store
 .env
