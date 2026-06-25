@@ -17,6 +17,12 @@
  * available (see `langtell/franc`); without it the classifier simply stops at
  * the word rungs. Pair this with {@link hasProfile}/`PROFILED_CODES` from
  * `langtell/profiles` to build a roster of codes that will actually classify.
+ *
+ * Both {@link classifyBySnippet} and {@link Rung3Resolver} are generic over the
+ * concrete profile type, inferred from the `candidates` you pass. A consumer
+ * with a stricter profile (e.g. `words` required) can hand its own resolver
+ * straight to `classifyBySnippet` with no adapter — the generic defaults to
+ * {@link LanguageProfile}, so the bare form is unchanged.
  */
 export { classifyBySnippet, FRANC_RUNG } from "./internal/classify.js";
 export type { Rung, Rung3Resolver, RungVerdict, SnippetVerdict } from "./internal/classify.js";
