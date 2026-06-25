@@ -6,6 +6,7 @@ import type {
   Weights,
 } from "./types.js";
 import { normalizeBCP47 } from "./internal/bcp47.js";
+import { scriptOfProfile, type ScriptName } from "./internal/classify.js";
 
 export interface FuseOptions {
   weights?: Weights;
@@ -68,11 +69,15 @@ export function fuse(
   const normalized = normalizeEvidence(evidence, options.candidates);
 
   // Under `"unknown"`, a non-discriminating script read scores nothing on its own
-  // — it's dropped from the tally and the pin below — but stays in the trail. The
-  // full `normalized` set is still returned as evidence.
+  // — it's dropped from the tally and the pin below — but stays in the trail. AND
+  // context written in a *different script* than that title is dropped too: a
+  // foreign-script title's language is never named by page/transport context in
+  // another script (a Latin title on a Ukrainian page is a foreign title in a
+  // Ukrainian UI, not a Ukrainian title). The full `normalized` set is still
+  // returned as evidence.
   const scoring =
     options.nonDiscriminatingScript === "unknown"
-      ? normalized.filter((item) => !isNeutralized(item, normalized))
+      ? filterForUnknownMode(normalized, options.candidates)
       : normalized;
 
   const scores = new Map<string, number>();
@@ -129,6 +134,72 @@ function normalizeEvidence(
     if (normalized === item.language) return item;
     return { ...item, language: normalized };
   });
+}
+
+/**
+ * The scoring set under `nonDiscriminatingScript: "unknown"`. Two cuts:
+ *
+ *  1. Drop every *neutralized* non-discriminating script read (see
+ *     {@link isNeutralized}) — it names a language only by being the lone
+ *     candidate in its script, with nothing corroborating it.
+ *  2. Drop context (page/transport) evidence whose language is in a **different
+ *     script** than such a neutralized title. A foreign-script title's language
+ *     is not the page's language: a Latin title on a `lang="uk"` page must not
+ *     resolve to `uk`. Same-script context (an explicit `en` `Content-Language`
+ *     for a Latin title) survives and may still name — or, among same-script
+ *     candidates, disambiguate — the title.
+ *
+ * The second cut needs each language's script, which is derived from the
+ * candidate roster's alphabets. When `candidates` is absent the scripts can't be
+ * derived, so the cut is skipped and behavior falls back to cut 1 alone (the
+ * 0.3.0 behavior) — never throwing.
+ */
+function filterForUnknownMode(
+  normalized: readonly LanguageEvidence[],
+  candidates: readonly LanguageProfile[] | undefined,
+): LanguageEvidence[] {
+  const surviving = normalized.filter((item) => !isNeutralized(item, normalized));
+
+  const titleScript = nonDiscriminatingTitleScript(normalized, candidates);
+  if (titleScript === null) return surviving;
+
+  const scriptOf = scriptByCode(candidates ?? []);
+  return surviving.filter((item) => {
+    // Keep the script reads themselves and anything whose script we can't place;
+    // only cross-script *context* in a known, different script is excluded.
+    if (SCRIPT_KINDS.has(item.kind) || item.language === "unknown") return true;
+    const itemScript = scriptOf.get(item.language);
+    return itemScript === undefined || itemScript === titleScript;
+  });
+}
+
+/** The script of the title under `"unknown"` mode, or `null` when there is no
+ *  neutralized non-discriminating script read to anchor on (so no cross-script
+ *  cut applies) or the roster can't place that read's language. */
+function nonDiscriminatingTitleScript(
+  normalized: readonly LanguageEvidence[],
+  candidates: readonly LanguageProfile[] | undefined,
+): ScriptName | null {
+  if (candidates === undefined) return null;
+  const scriptOf = scriptByCode(candidates);
+  for (const item of normalized) {
+    if (isNeutralized(item, normalized)) {
+      const script = scriptOf.get(item.language);
+      if (script !== undefined) return script;
+    }
+  }
+  return null;
+}
+
+/** Map each roster code to the script of its alphabet (Cyrillic/Latin). Codes
+ *  whose alphabet carries no Cyrillic/Latin letter are omitted. */
+function scriptByCode(candidates: readonly LanguageProfile[]): Map<string, ScriptName> {
+  const map = new Map<string, ScriptName>();
+  for (const c of candidates) {
+    const script = scriptOfProfile(c);
+    if (script !== null) map.set(c.code, script);
+  }
+  return map;
 }
 
 /**

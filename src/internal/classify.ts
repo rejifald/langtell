@@ -77,6 +77,10 @@ export type Rung3Resolver<P extends LanguageProfile = LanguageProfile> = (
 const CYRILLIC_RE = /\p{Script=Cyrillic}/u;
 const LATIN_RE = /\p{Script=Latin}/u;
 
+/** A coarse script bucket — the only two the candidate-relative classifier
+ *  distinguishes today. `null` means "no letters / undetermined". */
+export type ScriptName = "cyrillic" | "latin";
+
 /** Below this length, trigrams are too noisy to justify a rung-3 verdict. */
 export const RUNG3_MIN_LENGTH = 24;
 
@@ -122,8 +126,11 @@ function dominantScript(text: string): "cyrillic" | "latin" | null {
   return cyr >= lat ? "cyrillic" : "latin";
 }
 
-/** The script of a profile's alphabet. */
-function profileScript(profile: LanguageProfile): "cyrillic" | "latin" | null {
+/** The script a profile's alphabet is written in, or `null` if it carries no
+ *  Cyrillic/Latin letter. Exported so the fuser can derive each roster
+ *  candidate's script without re-deriving the script regexes — a Latin alphabet
+ *  ⇒ `"latin"`, a Cyrillic one ⇒ `"cyrillic"`. */
+export function scriptOfProfile(profile: LanguageProfile): ScriptName | null {
   for (const ch of profile.alphabet) {
     if (CYRILLIC_RE.test(ch)) return "cyrillic";
     if (LATIN_RE.test(ch)) return "latin";
@@ -147,7 +154,7 @@ export function scopeCandidates<P extends LanguageProfile>(
   const seen = new Set<string>();
   const scoped: P[] = [];
   for (const c of candidates) {
-    if (profileScript(c) !== script || seen.has(c.code)) continue;
+    if (scriptOfProfile(c) !== script || seen.has(c.code)) continue;
     seen.add(c.code);
     scoped.push(c);
   }

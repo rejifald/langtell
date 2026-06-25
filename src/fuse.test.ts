@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fuse } from "./fuse.js";
-import type { LanguageEvidence } from "./types.js";
+import type { LanguageEvidence, LanguageProfile } from "./types.js";
 
 describe("fuse", () => {
   it("returns unknown for empty evidence", () => {
@@ -212,5 +212,81 @@ describe("fuse — nonDiscriminatingScript (the inverse of the script guard)", (
       },
     ];
     expect(fuse(discriminating, { nonDiscriminatingScript: "unknown" }).language).toBe("uk");
+  });
+});
+
+describe("fuse — nonDiscriminatingScript: context in a different script may not name the title", () => {
+  // Minimal `{ code, alphabet }` rosters are enough to derive each candidate's
+  // script (the cross-script cut only needs the alphabet).
+  const uk: LanguageProfile = { code: "uk", alphabet: "абвгґдеєжзиіїйклмнопрстуфхцчшщьюя" };
+  const en: LanguageProfile = { code: "en", alphabet: "abcdefghijklmnopqrstuvwxyz" };
+  const de: LanguageProfile = { code: "de", alphabet: "abcdefghijklmnopqrstuvwxyzäöüß" };
+
+  /** A lone-Latin-candidate title read against `[uk, en]` — Latin owned by `en`
+   *  alone, so non-discriminating. */
+  const latinTitle: LanguageEvidence = {
+    kind: "title-script",
+    language: "en",
+    confidence: 0.95,
+    source: "title-script",
+    value: "Inception",
+    discriminating: false,
+  };
+
+  // High confidence so a *surviving* context clears the winning-score floor; the
+  // point of these tests is the script cut, not the score arithmetic.
+  function pageContext(kind: LanguageEvidence["kind"], language: string): LanguageEvidence {
+    return { kind, language, confidence: 0.95, source: kind, value: language };
+  }
+
+  it("drops uk page context (Cyrillic) for a Latin title → unknown", () => {
+    for (const kind of [
+      "html-lang",
+      "meta-og-locale",
+      "http-content-language",
+    ] as const satisfies LanguageEvidence["kind"][]) {
+      const evidence = [latinTitle, pageContext(kind, "uk")];
+      expect(
+        fuse(evidence, { nonDiscriminatingScript: "unknown", candidates: [uk, en] }).language,
+      ).toBe("unknown");
+    }
+  });
+
+  it("keeps same-script en context for a Latin title → en", () => {
+    const evidence = [latinTitle, pageContext("http-content-language", "en")];
+    expect(
+      fuse(evidence, { nonDiscriminatingScript: "unknown", candidates: [uk, en] }).language,
+    ).toBe("en");
+  });
+
+  it("among same-script candidates, de context still disambiguates a Latin title → de", () => {
+    // Latin owned by both en & de — but a Latin read that named `en` only because
+    // it was the *first* lone-ish pick (discriminating:false) must not block the
+    // de page from naming the title, since de is the same (Latin) script.
+    const evidence = [latinTitle, pageContext("html-lang", "de")];
+    expect(
+      fuse(evidence, { nonDiscriminatingScript: "unknown", candidates: [en, de] }).language,
+    ).toBe("de");
+  });
+
+  it("a Cyrillic uk/ru disambiguation is unaffected by the cross-script cut", () => {
+    const ru: LanguageProfile = { code: "ru", alphabet: "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" };
+    const cyrillicTitle: LanguageEvidence = {
+      kind: "title-script",
+      language: "uk",
+      confidence: 0.9,
+      source: "title-script",
+      value: "Слава Україні",
+      // ≥2 same-script candidates ⇒ discriminating ⇒ never neutralized.
+    };
+    expect(
+      fuse([cyrillicTitle], { nonDiscriminatingScript: "unknown", candidates: [uk, ru] }).language,
+    ).toBe("uk");
+  });
+
+  it("without candidates, falls back to 0.3.0 behavior (cross-script context still wins)", () => {
+    const evidence = [latinTitle, pageContext("http-content-language", "uk")];
+    // No roster ⇒ scripts can't be derived ⇒ no cut ⇒ uk context wins as before.
+    expect(fuse(evidence, { nonDiscriminatingScript: "unknown" }).language).toBe("uk");
   });
 });
