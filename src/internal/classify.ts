@@ -61,10 +61,17 @@ const UNKNOWN: SnippetVerdict = {
  *  {@link classifyBySnippet} by callers that have franc available. Kept as an
  *  injected seam — not a direct import — so this module stays franc-free and
  *  importable without pulling franc's tables. Returns a rung-3 verdict or
- *  `null` (abstain). */
-export type Rung3Resolver = (
+ *  `null` (abstain).
+ *
+ *  Generic over the concrete profile type `P` the caller classifies with, so a
+ *  consumer that defines a stricter profile (e.g. `words` required) can type its
+ *  resolver over that exact shape and hand it to {@link classifyBySnippet} with
+ *  no adapter — the resolver sees `readonly P[]`, the same array the classifier
+ *  scoped from its input. Defaults to {@link LanguageProfile} for callers that
+ *  don't narrow. */
+export type Rung3Resolver<P extends LanguageProfile = LanguageProfile> = (
   text: string,
-  scoped: readonly LanguageProfile[],
+  scoped: readonly P[],
 ) => RungVerdict | null;
 
 const CYRILLIC_RE = /\p{Script=Cyrillic}/u;
@@ -125,18 +132,20 @@ function profileScript(profile: LanguageProfile): "cyrillic" | "latin" | null {
 }
 
 /** Candidates whose script matches the text's dominant script (others can't tip
- *  the verdict). Empty when the text carries no letters. */
-export function scopeCandidates(
+ *  the verdict). Empty when the text carries no letters. Generic over the
+ *  concrete profile type `P`: the result is a subset of the input array, so it
+ *  keeps `P` — a stricter caller's profiles stay strictly typed downstream. */
+export function scopeCandidates<P extends LanguageProfile>(
   text: string,
-  candidates: readonly LanguageProfile[],
-): LanguageProfile[] {
+  candidates: readonly P[],
+): P[] {
   const script = dominantScript(text);
   if (script === null) return [];
   // Keep one profile per code. A language listed twice would otherwise make its
   // own distinctive chars/words read as "owned by ≥2 candidates" in `tally`,
   // cancelling them out and collapsing the verdict to "unknown".
   const seen = new Set<string>();
-  const scoped: LanguageProfile[] = [];
+  const scoped: P[] = [];
   for (const c of candidates) {
     if (profileScript(c) !== script || seen.has(c.code)) continue;
     seen.add(c.code);
@@ -260,11 +269,18 @@ function wordRung(
  * Classify `text` among `candidates`. Synchronous and allocation-light. Returns
  * `"unknown"` on empty evidence, on a tie inside the candidate set, or when
  * nothing is distinctive.
+ *
+ * Generic over the concrete profile type `P`, inferred from `candidates`. The
+ * optional `rung3` resolver is typed over the same `P`, so a consumer with a
+ * stricter profile (e.g. `words` required) can pass its own resolver directly,
+ * with no adapter — the resolver sees exactly the profiles the caller passed.
+ * `P` defaults to {@link LanguageProfile}, so the bare two-argument form and
+ * every existing call site are unchanged.
  */
-export function classifyBySnippet(
+export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
   text: string,
-  candidates: readonly LanguageProfile[],
-  rung3?: Rung3Resolver,
+  candidates: readonly P[],
+  rung3?: Rung3Resolver<P>,
 ): SnippetVerdict {
   if (!text || candidates.length === 0) return UNKNOWN;
 
