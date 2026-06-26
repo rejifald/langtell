@@ -66,6 +66,10 @@
       "types": "./dist/chrome-ai.d.ts",
       "import": "./dist/chrome-ai.js"
     },
+    "./cyrillic": {
+      "types": "./dist/cyrillic.d.ts",
+      "import": "./dist/cyrillic.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
