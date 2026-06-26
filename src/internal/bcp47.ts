@@ -81,6 +81,8 @@ const ALIASES: Record<string, string> = {
   "po polsku": "pl",
   polish: "pl",
   польська: "pl",
+  "польська мова": "pl",
+  "по-польськи": "pl",
 
   // German
   de: "de",
@@ -90,6 +92,8 @@ const ALIASES: Record<string, string> = {
   "auf deutsch": "de",
   german: "de",
   німецька: "de",
+  "німецька мова": "de",
+  "по-німецьки": "de",
 
   // French
   fr: "fr",
@@ -99,6 +103,8 @@ const ALIASES: Record<string, string> = {
   "en français": "fr",
   french: "fr",
   французька: "fr",
+  "французька мова": "fr",
+  "по-французьки": "fr",
 
   // Spanish
   es: "es",
@@ -108,6 +114,8 @@ const ALIASES: Record<string, string> = {
   "en español": "es",
   spanish: "es",
   іспанська: "es",
+  "іспанська мова": "es",
+  "по-іспанськи": "es",
 
   // Italian
   it: "it",
@@ -116,6 +124,8 @@ const ALIASES: Record<string, string> = {
   "in italiano": "it",
   italian: "it",
   італійська: "it",
+  "італійська мова": "it",
+  "по-італійськи": "it",
 };
 
 /**
@@ -132,17 +142,38 @@ export function normalizeLanguageCode(input: string | undefined | null): string 
   return ALIASES[cleaned] ?? null;
 }
 
+/** Options for {@link normalizeBCP47}. */
+export interface NormalizeBCP47Options {
+  /**
+   * What to return when the input's primary subtag is not in the alias table.
+   *  - `"subtag"` (default) — pass the raw primary subtag through, so a code
+   *    outside the table still resolves to its language (`pt-BR` → `pt`,
+   *    `sv` → `sv`). Best for a permissive normalizer whose roster decides
+   *    relevance downstream.
+   *  - `"null"` — treat an unknown head as unsupported and return `null`. Best
+   *    for callers that gate on a fixed alias set and read `null` as "not a
+   *    language I handle".
+   */
+  unknownHead?: "subtag" | "null";
+}
+
 /**
  * BCP-47-aware normalization: try the full string first, then strip a
  * region/script suffix (`en-US` → `en`, `zh_CN` → `zh`). Use ONLY for inputs
  * documented to be BCP-47 — `hreflang`, `<html lang>`, `Content-Language`,
  * `data-lang`/`data-locale` — never for free-text URL slugs.
  *
- * Falls back to the raw primary subtag when no alias matches, so a code outside
- * the alias table (e.g. `pt-BR` → `pt`) still resolves to its language. The
- * roster decides relevance downstream.
+ * By default, falls back to the raw primary subtag when no alias matches, so a
+ * code outside the alias table (e.g. `pt-BR` → `pt`) still resolves to its
+ * language; the roster decides relevance downstream. Pass
+ * `{ unknownHead: "null" }` to instead return `null` for any tag whose head
+ * isn't in the table — for callers that treat "not in my alias set" as
+ * unsupported. The default (`"subtag"`) is unchanged.
  */
-export function normalizeBCP47(input: string | undefined | null): string | null {
+export function normalizeBCP47(
+  input: string | undefined | null,
+  options?: NormalizeBCP47Options,
+): string | null {
   if (input === undefined || input === null) return null;
   const cleaned = input.trim().toLowerCase().replace(/_/g, "-");
   if (cleaned.length === 0) return null;
@@ -150,7 +181,9 @@ export function normalizeBCP47(input: string | undefined | null): string | null 
   if (direct !== undefined) return direct;
   const head = cleaned.split("-")[0];
   if (head === undefined || head.length === 0) return null;
-  return ALIASES[head] ?? head;
+  const aliased = ALIASES[head];
+  if (aliased !== undefined) return aliased;
+  return options?.unknownHead === "null" ? null : head;
 }
 
 /**

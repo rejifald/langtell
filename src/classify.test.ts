@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { FRANC_RUNG, classifyBySnippet } from "./classify.js";
+import { FRANC_RUNG, RUNG3_MIN_LENGTH, classifyBySnippet, scopeCandidates } from "./classify.js";
 import type { Rung, SnippetVerdict } from "./classify.js";
-import { ru, uk } from "./profiles.js";
+import { en, ru, uk } from "./profiles.js";
 
 // The `langtell/classify` entry is the opt-in, power-user layer beneath the
 // default Classification: it surfaces WHICH rung decided and the integer margin,
@@ -56,5 +56,26 @@ describe("langtell/classify — structured snippet verdict", () => {
     expect(FRANC_RUNG).toBe(3);
     const rung: Rung = FRANC_RUNG; // FRANC_RUNG is assignable to the Rung union
     expect(rung).toBe(3);
+  });
+});
+
+// The scoping seams a rung-3 resolver needs to run its backstop off-path (over
+// raw, unscoped candidates) the same way `classifyBySnippet` scopes internally.
+describe("langtell/classify — exposed scoping seams", () => {
+  it("RUNG3_MIN_LENGTH is the trigram length floor", () => {
+    expect(RUNG3_MIN_LENGTH).toBe(24);
+  });
+
+  it("scopeCandidates narrows a roster to the text's dominant script", () => {
+    // Cyrillic text keeps the Cyrillic candidates, drops the lone Latin one.
+    expect(
+      scopeCandidates("Привіт світ", [uk, ru, en])
+        .map((p) => p.code)
+        .sort(),
+    ).toEqual(["ru", "uk"]);
+    // Latin text keeps only the Latin candidate.
+    expect(scopeCandidates("hello world", [uk, ru, en]).map((p) => p.code)).toEqual(["en"]);
+    // No letters → nothing in scope.
+    expect(scopeCandidates("12345 — !!!", [uk, ru, en])).toEqual([]);
   });
 });
