@@ -25,5 +25,10 @@
     "path": "dist/classify.js",
     "import": "{ classifyBySnippet }",
     "limit": "2 kB"
+  },
+  {
+    "name": "cyrillic fast-path (opt-in subpath — roster-free, zero-dep)",
+    "path": "dist/cyrillic.js",
+    "limit": "1 kB"
   }
 ]
