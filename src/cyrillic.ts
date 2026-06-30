@@ -3,11 +3,18 @@
  *
  * Where {@link classifyBySnippet} (`langtell/classify`) scores a snippet
  * *relative to a candidate roster you pass in*, this is the opposite trade: a
- * fixed, zero-config discriminator for the four Cyrillic languages langtell
- * profiles — Ukrainian, Russian, Belarusian, Bulgarian — decided purely by
- * letters distinctive to each, with no profiles, no tokenization, and no franc.
- * Reach for it when you just need "is this Russian / is this Ukrainian?" on a
- * hot path and don't want to assemble a candidate set.
+ * fixed, zero-config discriminator for the four Cyrillic languages this fast-path
+ * positively identifies — Ukrainian, Russian, Belarusian, Bulgarian — decided
+ * purely by letters distinctive to each, with no profiles, no tokenization, and
+ * no franc. Reach for it when you just need "is this Russian / is this
+ * Ukrainian?" on a hot path and don't want to assemble a candidate set.
+ *
+ * Other Cyrillic languages langtell now profiles (Serbian, Macedonian, Kazakh)
+ * are deliberately NOT positively detected here — that is the candidate-relative
+ * classifier's job. This module only takes care not to MISLABEL them: text
+ * carrying letters distinctive to sr/mk/kk (ђ ћ џ ѓ ќ ѕ љ њ ј, or the Kazakh
+ * Turkic set ә ғ қ ң ө ұ ү һ) returns `"unknown"` so the snippet escalates to
+ * the classifier instead of being silently called Russian by the fallbacks.
  *
  * Each language carries letters the others (mostly) don't:
  *   Ukrainian   — і ї є ґ
@@ -36,6 +43,13 @@ const RU_DISTINCTIVE = /[ыё]/gi;
 const BE_DISTINCTIVE = /ў/gi;
 const HARD_SIGN = /ъ/gi;
 const E_OBOROT = /э/gi;
+// Letters distinctive to Serbian / Macedonian / Kazakh — none of which this
+// fast-path positively detects. Their presence only triggers a bail to
+// `"unknown"` (escalate to the classifier) so the Russian fallbacks below never
+// mislabel them. ј/љ/њ/џ are shared by sr+mk; ђ/ћ are Serbian, ѓ/ќ/ѕ Macedonian,
+// and ә/ғ/қ/ң/ө/ұ/ү/һ the distinctive Kazakh Turkic set (і is excluded here — it
+// is already Ukrainian-distinctive and handled above).
+const SIBLING_DISTINCTIVE = /[ђћџѓќѕљњјәғқңөұүһ]/gi;
 // U+0400–U+04FF is the Cyrillic Unicode block; written as explicit \u escapes
 // so the range bounds are unambiguous (regexp/no-obscure-range).
 const CYRILLIC = /[\u0400-\u04FF]/g;
@@ -70,6 +84,9 @@ interface Signals {
   hardSigns: number;
   eOborot: number;
   cyrillicCount: number;
+  /** Count of letters distinctive to sr/mk/kk (see {@link SIBLING_DISTINCTIVE}).
+   *  Non-zero ⇒ bail to `"unknown"` before the Russian fallbacks. */
+  siblingDistinctive: number;
 }
 
 function countSignals(text: string): Signals {
@@ -80,6 +97,7 @@ function countSignals(text: string): Signals {
     hardSigns: count(text, HARD_SIGN),
     eOborot: count(text, E_OBOROT),
     cyrillicCount: count(text, CYRILLIC),
+    siblingDistinctive: count(text, SIBLING_DISTINCTIVE),
   };
 }
 
@@ -89,11 +107,24 @@ function countSignals(text: string): Signals {
  * Cyrillic evidence, on a uk/ru tie, or when only an ambiguous `э` is present.
  */
 export function detectCyrillicLanguage(text: string): CyrillicVerdict {
-  const { ukScore, ruDistinctive, beScore, hardSigns, eOborot, cyrillicCount } = countSignals(text);
+  const { ukScore, ruDistinctive, beScore, hardSigns, eOborot, cyrillicCount, siblingDistinctive } =
+    countSignals(text);
 
   // ў is uniquely Belarusian — strongest single signal.
   if (beScore > 0) {
     return { language: "be", ukScore, ruScore: ruDistinctive };
+  }
+
+  // Mislabel guard: letters distinctive to Serbian/Macedonian/Kazakh, none of
+  // which this fast-path positively detects. Bail to `"unknown"` so the snippet
+  // escalates to the candidate-relative classifier instead of being silently
+  // labelled by the uk/ru/bg logic below. This fires BEFORE the uk/ru checks on
+  // purpose: Kazakh shares і with Ukrainian and ы with Russian (тілі, тым), so a
+  // Kazakh Turkic letter (ә/ғ/қ/…) must outrank a stray і/ы rather than letting
+  // the text be called Ukrainian or Russian. Genuine uk/ru/be/bg text carries
+  // none of these letters, so their detection above/below is unaffected.
+  if (siblingDistinctive > 0) {
+    return { language: "unknown", ukScore, ruScore: ruDistinctive };
   }
 
   // Both UA and RU evidence present — a tie is "unknown", not a silent UA call
