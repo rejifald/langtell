@@ -58,6 +58,36 @@ const BG_FREQUENT: readonly string[] = [
   "страна",
 ];
 
+/** Serbian Cyrillic has NO usable subtitle frequency data: hermitdave/
+ *  FrequencyWords ships Serbian in LATIN script only, and blind transliteration
+ *  would invent data, so this is a hand-curated Cyrillic content-word list,
+ *  mirroring the BE/BG fallbacks. Forms are everyday Serbian content words spelt
+ *  in Cyrillic; many use Serbian-distinctive letters (ј, ћ, ђ, џ) so they read as
+ *  distinctive at runtime. NEEDS NATIVE-SPEAKER / LINGUISTIC REVIEW before
+ *  release. */
+const SR_FREQUENT: readonly string[] = [
+  "вести",
+  "видео",
+  "град",
+  "држава",
+  "данас",
+  "живот",
+  "људи",
+  "посао",
+  "србија",
+  "српски",
+  "познат",
+  "земља",
+  "време",
+  "деца",
+  "године",
+  "човек",
+  "новине",
+  "свет",
+  "данашњи",
+  "недеља",
+];
+
 const uk: LanguageProfile = {
   code: "uk",
   iso6393: "ukr",
@@ -244,10 +274,126 @@ const en: LanguageProfile = {
   },
 };
 
-export { uk, ru, be, bg, en };
+const sr: LanguageProfile = {
+  code: "sr",
+  iso6393: "srp",
+  // Serbian Cyrillic azbuka (Вук), 30 letters. Distinctive vs the other Cyrillic
+  // profiles: ђ ћ (sr-only) and ј љ њ џ (shared with mk, inert between them; the
+  // word rungs decide sr↔mk). No ё й щ ъ ы ь э ю я.
+  alphabet: "абвгдђежзијклљмнњопрстћуфхцчџш",
+  words: {
+    // Serbian-distinctive grammatical markers. `сам` (I am) is omitted: it
+    // collides with Macedonian `сам` ("alone"). Shared forms with mk (и, да, се,
+    // не, на, само, …) are omitted so set-difference is not cancelled to nothing.
+    // The future markers use ћ, a letter no other profile has.
+    function: [
+      "је",
+      "су",
+      "али",
+      "ће",
+      "ћемо",
+      "ћеш",
+      "због",
+      "јер",
+      "овај",
+      "када",
+      "увек",
+      "сада",
+    ],
+    // Hand-curated Cyrillic fallback — see SR_FREQUENT. Flagged for review.
+    frequent: FREQUENT_GENERATED["sr"] ?? SR_FREQUENT,
+  },
+};
+
+const mk: LanguageProfile = {
+  code: "mk",
+  iso6393: "mkd",
+  // Macedonian alphabet, 31 letters. Distinctive: ѓ ќ ѕ (mk-only) plus ј љ њ џ
+  // (shared with sr). No ё й щ ъ ы ь э ю я, no ђ ћ (those are Serbian).
+  alphabet: "абвгдѓежзѕијклљмнњопрстќуфхцчџш",
+  words: {
+    // Macedonian-distinctive grammatical markers. The future particle `ќе` and
+    // `зошто`/`затоа` use ќ (mk-only); the clitics `го`/`ги` and `сум` (I am) are
+    // distinctively Macedonian. Forms shared with sr (и, да, се, не, само, …) are
+    // omitted; `вие`/`ние` are omitted as they collide with bg.
+    function: [
+      "го",
+      "ги",
+      "сум",
+      "ќе",
+      "дека",
+      "зошто",
+      "затоа",
+      "тоа",
+      "оваа",
+      "овој",
+      "тој",
+      "таа",
+      "тие",
+      "сега",
+      "сите",
+    ],
+    frequent: FREQUENT_GENERATED["mk"] ?? [],
+  },
+};
+
+const kk: LanguageProfile = {
+  code: "kk",
+  iso6393: "kaz",
+  // Kazakh Cyrillic, 42 letters (post-1940). Distinctive Turkic letters ә ғ қ ң
+  // ө ұ ү һ і set it apart from every Slavic profile; it keeps the Russian set
+  // (и й ё ц щ ъ ы ь э ю я) for loanwords. Highly distinctive, so low-risk.
+  alphabet: "аәбвгғдеёжзийкқлмнңоөпрстуұүфхһцчшщъыіьэюя",
+  words: {
+    // Kazakh function words — no overlap with any Slavic profile, so every form
+    // is safely distinctive. (`ма`/`ба`/`бе`/`па` interrogative particles are
+    // omitted: too short and ambiguous against Slavic two-letter clitics.)
+    function: [
+      "мен",
+      "сен",
+      "бұл",
+      "және",
+      "бар",
+      "жоқ",
+      "ол",
+      "үшін",
+      "оны",
+      "менің",
+      "сенің",
+      "оның",
+      "бірақ",
+      "егер",
+      "сол",
+      "осы",
+      "біз",
+      "сіз",
+      "олар",
+      "қайда",
+      "неге",
+      "себебі",
+      "қандай",
+      "мұнда",
+      "деп",
+      "ғой",
+    ],
+    // Corpus-derived from the smaller `kk_full.txt` (no curated kk_50k exists).
+    frequent: FREQUENT_GENERATED["kk"] ?? [],
+  },
+};
+
+export { uk, ru, be, bg, en, sr, mk, kk };
 
 /** Registry of shipped profiles, keyed by BCP-47 code. */
-export const PROFILES: Readonly<Record<LanguageCode, LanguageProfile>> = { uk, ru, be, bg, en };
+export const PROFILES: Readonly<Record<LanguageCode, LanguageProfile>> = {
+  uk,
+  ru,
+  be,
+  bg,
+  en,
+  sr,
+  mk,
+  kk,
+};
 
 /** BCP-47 codes for which langtell ships a ready-made {@link LanguageProfile}.
  *  Handy for narrowing a caller's roster to codes that can actually classify —

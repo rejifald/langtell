@@ -97,6 +97,47 @@ describe("detectCyrillicLanguage — Russian without classic distinctives", () =
   });
 });
 
+describe("detectCyrillicLanguage — sr/mk/kk mislabel guard", () => {
+  // These languages are NOT positively detected by the fast-path. The only
+  // contract here is that their distinctive letters stop the Russian fallbacks
+  // from silently calling them "ru" — they must escalate to "unknown".
+  it('does not call Serbian "ru" — returns unknown (ђ/ћ/ј present)', () => {
+    // Substantial Cyrillic, no uk/ru/be/bg distinctives, but Serbian ј/ћ/ђ — the
+    // RU fallback would otherwise fire on cyrillicCount >= 10.
+    const v = detectCyrillicLanguage("Ово је српски језик, ћирилица и ђаво");
+    expect(v.language).toBe("unknown");
+    expect(v.language).not.toBe("ru");
+  });
+
+  it('does not call Macedonian "ru" — returns unknown (ќ/ѓ/џ present)', () => {
+    const v = detectCyrillicLanguage("Ова е македонски јазик, ќе одиме дома");
+    expect(v.language).toBe("unknown");
+    expect(v.language).not.toBe("ru");
+  });
+
+  it('does not call Kazakh "ru" — returns unknown (ә/ғ/қ/ң/ө/ұ/ү present)', () => {
+    const v = detectCyrillicLanguage("Бұл қазақ тілі, мен сені жақсы көремін");
+    expect(v.language).toBe("unknown");
+    expect(v.language).not.toBe("ru");
+  });
+
+  it("isRussian is false for sr/mk/kk samples", () => {
+    expect(isRussian("Ово је српски језик, ћирилица")).toBe(false);
+    expect(isRussian("Ова е македонски јазик, ќе одиме")).toBe(false);
+    expect(isRussian("Бұл қазақ тілі, мен сені жақсы көремін")).toBe(false);
+  });
+
+  it("a single distinctive sibling letter is enough to bail before the RU fallback", () => {
+    // 10+ Cyrillic chars, no uk/ru/be/bg distinctives, exactly one Serbian ћ.
+    expect(detectCyrillicLanguage("осећам срећу").language).toBe("unknown");
+  });
+
+  it("the guard does not shadow positive ru detection (ы/ё still win)", () => {
+    // Russian text with ы present and no sibling letters stays ru.
+    expect(detectCyrillicLanguage("Это русский язык, объём и мысли").language).toBe("ru");
+  });
+});
+
 describe("detectCyrillicLanguage — tie-break", () => {
   // When UA and RU evidence are tied, biasing toward UA would silently classify
   // Belarusian (and other Cyrillic) text as Ukrainian. A tie is `unknown`.
