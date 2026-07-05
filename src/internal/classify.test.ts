@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyBySnippet, distinctiveChars, scopeCandidates, stripNoise } from "./classify.js";
-import { be, bg, en, ru, uk } from "../profiles.js";
+import { be, bg, en, kk, mk, ru, sr, uk } from "../profiles.js";
 
 /** True if any code point of `word` is in `distinctive`. */
 function hasDistinctiveChar(word: string, distinctive: ReadonlySet<string>): boolean {
@@ -107,13 +107,39 @@ describe("stripNoise — URLs / @handles / #hashtags", () => {
 
 describe("distinctiveChars — frequent lists carry no globally-unique characters", () => {
   // A word containing a char unique to its own language is dead weight — rung 1
-  // catches it first. This pins the invariant for the shipped profiles.
-  const unique = distinctiveChars([uk, ru, be, bg, en]);
-  for (const p of [uk, ru, be, bg, en]) {
+  // catches it first. This pins the invariant for the shipped profiles, the full
+  // roster included (mk's ќ/ѓ/ѕ and kk's ә/ғ/қ/… words were filtered out of the
+  // frequent lists for exactly this reason).
+  const roster = [uk, ru, be, bg, en, sr, mk, kk];
+  const unique = distinctiveChars(roster);
+  for (const p of roster) {
     it(`${p.code}.words.frequent`, () => {
       const u = unique.get(p.code) ?? new Set<string>();
       const offenders = (p.words?.frequent ?? []).filter((w) => hasDistinctiveChar(w, u));
       expect(offenders).toEqual([]);
     });
   }
+});
+
+describe("classifyBySnippet — Cyrillic-sibling discrimination (sr/mk/kk)", () => {
+  // The new profiles must actually classify within a mixed Cyrillic roster.
+  const roster = [uk, ru, be, bg, sr, mk, kk];
+
+  it("classifies Serbian via its distinctive letters/words", () => {
+    // ћ/ђ/ј are sr-distinctive at rung 1 within this roster.
+    expect(classifyBySnippet("Ово је српски језик, ћирилица", roster).language).toBe("sr");
+  });
+
+  it("classifies Macedonian via its distinctive letters/words", () => {
+    // ќ/ѓ/ѕ are mk-distinctive; ј/љ/њ/џ cancel against sr.
+    expect(classifyBySnippet("Ова е македонски јазик, ќе одиме дома", roster).language).toBe("mk");
+  });
+
+  it("classifies Kazakh via its distinctive Turkic letters", () => {
+    expect(classifyBySnippet("Бұл қазақ тілі, мен сені жақсы көремін", roster).language).toBe("kk");
+  });
+
+  it("Russian in the same roster still resolves to ru, not a sibling", () => {
+    expect(classifyBySnippet("Это русский язык, объём и мысли", roster).language).toBe("ru");
+  });
 });

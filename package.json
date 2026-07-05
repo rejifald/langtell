@@ -1,6 +1,6 @@
 {
   "name": "langtell",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Tell me the language — evidence-fusion language detection for short strings, with an auditable confidence trail.",
   "type": "module",
   "license": "MIT",
@@ -65,6 +65,10 @@
     "./chrome-ai": {
       "types": "./dist/chrome-ai.d.ts",
       "import": "./dist/chrome-ai.js"
+    },
+    "./cyrillic": {
+      "types": "./dist/cyrillic.d.ts",
+      "import": "./dist/cyrillic.js"
     },
     "./package.json": "./package.json"
   },

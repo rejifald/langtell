@@ -23,6 +23,19 @@
  * with a stricter profile (e.g. `words` required) can hand its own resolver
  * straight to `classifyBySnippet` with no adapter — the generic defaults to
  * {@link LanguageProfile}, so the bare form is unchanged.
+ *
+ * For callers building a rung-3 resolver that ALSO runs its backstop off-path
+ * (e.g. an oracle over raw, unscoped candidates), two helpers from the same
+ * machinery are exposed so that scoping stays consistent with the classifier
+ * rather than re-derived: {@link scopeCandidates} narrows a roster to the text's
+ * dominant script exactly as `classifyBySnippet` does internally, and
+ * {@link RUNG3_MIN_LENGTH} is the length floor below which a trigram verdict is
+ * too noisy to trust.
  */
-export { classifyBySnippet, FRANC_RUNG } from "./internal/classify.js";
+export {
+  classifyBySnippet,
+  FRANC_RUNG,
+  RUNG3_MIN_LENGTH,
+  scopeCandidates,
+} from "./internal/classify.js";
 export type { Rung, Rung3Resolver, RungVerdict, SnippetVerdict } from "./internal/classify.js";

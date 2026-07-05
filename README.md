@@ -97,21 +97,47 @@ This powers per-rung safety gates ("act only when a _weak_ rung clears a high
 margin") and diagnostics — uses a single confidence number can't serve. The
 high-level `compile`/`detect`/`fuse` output is unchanged; this is purely additive.
 
+### Roster-free Cyrillic fast-path
+
+`langtell/classify` scores a snippet _relative to a roster you pass in_.
+`langtell/cyrillic` is the opposite trade: a fixed, zero-config discriminator for
+the four Cyrillic languages langtell profiles — Ukrainian, Russian, Belarusian,
+Bulgarian — decided purely by distinctive letters, with no roster, no
+tokenization, and no franc. Reach for it when you just need _"is this Russian? is
+this Ukrainian?"_ on a hot path and don't want to assemble a candidate set.
+
+```ts
+import { detectCyrillicLanguage, isUkrainian } from "langtell/cyrillic";
+
+detectCyrillicLanguage("Їжак"); // → { language: "uk", … }  ї is uniquely Ukrainian
+detectCyrillicLanguage("жёлтый"); // → { language: "ru", … }  ё / ы are Russian
+detectCyrillicLanguage("съм българин"); // → { language: "bg", … }  ъ used as a vowel, repeated
+detectCyrillicLanguage("подъезд"); // → { language: "ru", … }  lone ъ in a short word
+isUkrainian("Слава Україні"); // → true
+```
+
+It returns `"unknown"` rather than guessing when the signals are insufficient — no
+Cyrillic at all, a uk/ru tie, or only an ambiguous `э`. The `CyrillicVerdict` also
+carries the raw `ukScore` / `ruScore` tallies behind the call. Zero-dependency and
+side-effect-free; escalate to `classifyBySnippet` or a franc-backed source when
+letter signals aren't enough.
+
 ## API at a glance
 
-| Export                                | Role                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------- |
-| `compile(config)`                     | Build a configured `detect` function (does the precompute once).                |
-| `detect(input)`                       | The compiled detector. Sync or `Promise`, by config — see below.                |
-| `evidenceFromText(text, candidates?)` | Producer: roster-relative script + distinctive-letter signals. Zero-dep, sync.  |
-| `evidenceFromHtml(html)`              | Producer: `<html lang>`, meta content-language, `og:locale`. Zero-dep, sync.    |
-| `evidenceFromHeaders(h)`              | Producer: HTTP `Content-Language`. Zero-dep, sync.                              |
-| `normalizeBCP47(tag)`                 | Normalize a BCP-47 tag/alias to a canonical code (`uk-UA`/`ua` → `uk`).         |
-| `fuse(evidence, opts?)`               | Weighted blend + "context never overrides clear script" guard.                  |
-| `langtell/profiles`                   | Ready-made `LanguageProfile` data (uk/ru/be/bg/en). Opt-in (carries word data). |
-| `langtell/classify`                   | Opt-in structured snippet verdict (`{ language, margin, rung }`). Zero-dep.     |
-| `langtell/franc`                      | Opt-in franc engine (pulls trigram tables). Sync.                               |
-| `langtell/chrome-ai`                  | Opt-in on-device Chrome AI engine (browser). Async.                             |
+| Export                                | Role                                                                                                         |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `compile(config)`                     | Build a configured `detect` function (does the precompute once).                                             |
+| `detect(input)`                       | The compiled detector. Sync or `Promise`, by config — see below.                                             |
+| `evidenceFromText(text, candidates?)` | Producer: roster-relative script + distinctive-letter signals. Zero-dep, sync.                               |
+| `evidenceFromHtml(html)`              | Producer: `<html lang>`, meta content-language, `og:locale`. Zero-dep, sync.                                 |
+| `evidenceFromHeaders(h)`              | Producer: HTTP `Content-Language`. Zero-dep, sync.                                                           |
+| `normalizeBCP47(tag)`                 | Normalize a BCP-47 tag/alias to a canonical code (`uk-UA`/`ua` → `uk`).                                      |
+| `fuse(evidence, opts?)`               | Weighted blend + "context never overrides clear script" guard.                                               |
+| `langtell/profiles`                   | Ready-made `LanguageProfile` data (uk/ru/be/bg/en). Opt-in (carries word data).                              |
+| `langtell/classify`                   | Opt-in structured snippet verdict (`{ language, margin, rung }`). Zero-dep.                                  |
+| `langtell/cyrillic`                   | Opt-in roster-free Cyrillic fast-path (`detectCyrillicLanguage`, `isRussian`/`isUkrainian`). Zero-dep, sync. |
+| `langtell/franc`                      | Opt-in franc engine (pulls trigram tables). Sync.                                                            |
+| `langtell/chrome-ai`                  | Opt-in on-device Chrome AI engine (browser). Async.                                                          |
 
 `detect` returns a plain `Classification` when every registered source is
 synchronous, and `Promise<Classification>` the moment an async engine is in the

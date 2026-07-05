@@ -6,6 +6,7 @@ export { evidenceFromHtml } from "./html.js";
 export { DEFAULT_NODE_LANG_ATTRIBUTES, evidenceFromNodeLang } from "./node-lang.js";
 export { evidenceFromHeaders } from "./headers.js";
 export { normalizeBCP47, normalizeLanguageCode, primarySubtag } from "./internal/bcp47.js";
+export type { NormalizeBCP47Options } from "./internal/bcp47.js";
 export type {
   AsyncSource,
   AttrBag,

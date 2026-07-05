@@ -15,6 +15,7 @@ export default defineConfig({
     classify: "src/classify.ts",
     franc: "src/franc.ts",
     "chrome-ai": "src/chrome-ai.ts",
+    cyrillic: "src/cyrillic.ts",
   },
   format: ["esm"],
   target: "es2022",

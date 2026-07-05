@@ -56,3 +56,54 @@ describe("primarySubtag (header/HTML extraction)", () => {
     expect(primarySubtag(null)).toBeNull();
   });
 });
+
+describe("normalizeBCP47 — unknownHead option", () => {
+  it("defaults to passing the raw primary subtag through (back-compat)", () => {
+    expect(normalizeBCP47("pt-BR")).toBe("pt");
+    expect(normalizeBCP47("sv")).toBe("sv");
+    expect(normalizeBCP47("zh-CN")).toBe("zh");
+    // Explicit "subtag" is identical to the default.
+    expect(normalizeBCP47("pt-BR", { unknownHead: "subtag" })).toBe("pt");
+  });
+
+  it('returns null for an unknown head when unknownHead is "null"', () => {
+    expect(normalizeBCP47("pt-BR", { unknownHead: "null" })).toBeNull();
+    expect(normalizeBCP47("sv", { unknownHead: "null" })).toBeNull();
+    expect(normalizeBCP47("zh-CN", { unknownHead: "null" })).toBeNull();
+    expect(normalizeBCP47("xx", { unknownHead: "null" })).toBeNull();
+  });
+
+  it("still resolves known aliases and subtags regardless of the option", () => {
+    expect(normalizeBCP47("ua", { unknownHead: "null" })).toBe("uk");
+    expect(normalizeBCP47("en-US", { unknownHead: "null" })).toBe("en");
+    expect(normalizeBCP47("rus", { unknownHead: "null" })).toBe("ru");
+  });
+
+  it("returns null for empty/nullish even with the option", () => {
+    expect(normalizeBCP47("", { unknownHead: "null" })).toBeNull();
+    expect(normalizeBCP47(undefined, { unknownHead: "null" })).toBeNull();
+  });
+});
+
+describe("BCP-47 alias parity — Ukrainian exonyms for pl/de/fr/es/it", () => {
+  const cases: ReadonlyArray<[string, string]> = [
+    ["польська мова", "pl"],
+    ["по-польськи", "pl"],
+    ["німецька мова", "de"],
+    ["по-німецьки", "de"],
+    ["французька мова", "fr"],
+    ["по-французьки", "fr"],
+    ["іспанська мова", "es"],
+    ["по-іспанськи", "es"],
+    ["італійська мова", "it"],
+    ["по-італійськи", "it"],
+  ];
+
+  it.each(cases)("normalizeLanguageCode(%j) → %j (exact-match)", (input, code) => {
+    expect(normalizeLanguageCode(input)).toBe(code);
+  });
+
+  it.each(cases)("normalizeBCP47(%j) → %j", (input, code) => {
+    expect(normalizeBCP47(input)).toBe(code);
+  });
+});
