@@ -5,6 +5,7 @@ export type LanguageCode = string;
 export type EvidenceKind =
   | "title-script"
   | "html-lang"
+  | "node-lang"
   | "meta-content-language"
   | "meta-og-locale"
   | "http-content-language"

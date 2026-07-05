@@ -31,6 +31,7 @@ const DEFAULT_KIND_WEIGHT: Record<string, number> = {
   "chrome-ai": 1,
   "source-prior": 0.7,
   franc: 0.7,
+  "node-lang": 0.65,
   "http-content-language": 0.6,
   "meta-content-language": 0.55,
   "meta-og-locale": 0.55,
