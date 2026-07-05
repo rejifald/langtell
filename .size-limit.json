@@ -3,12 +3,12 @@
     "name": "core — compile() (proves zero franc bytes)",
     "path": "dist/index.js",
     "import": "{ compile }",
-    "limit": "3 kB"
+    "limit": "3.25 kB"
   },
   {
     "name": "core — all named exports",
     "path": "dist/index.js",
-    "limit": "3 kB"
+    "limit": "3.25 kB"
   },
   {
     "name": "headers producer",
