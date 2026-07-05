@@ -9,9 +9,11 @@ const NODE_LANG_CONFIDENCE = 0.7;
 
 /**
  * Producer: a per-node declared language — the page's own label for one
- * content node, read from an attribute (e.g. Google's `data-rl`
- * response-language label on an AI-generated answer, or a standard `lang`
- * attribute on a content subtree).
+ * content node, read from an attribute. The one STANDARDIZED bearer is the
+ * global `lang` attribute (BCP-47, inheritable); everything else is a vendor
+ * convention the caller opts into — e.g. Google's `data-rl` response-language
+ * label on AI-generated answers. No attribute name is built in here: which
+ * attributes count as declarations is entirely the caller's choice.
  *
  * The document-scope siblings of this signal live in {@link evidenceFromHtml}
  * (`<html lang>`, `content-language`, `og:locale`); this is the same
@@ -23,11 +25,12 @@ const NODE_LANG_CONFIDENCE = 0.7;
  *
  * DOM-free by design — this module never touches an Element. The caller
  * passes the attribute values it extracted, keyed by attribute name
- * (`{ "data-rl": el.getAttribute("data-rl") }`), so WHICH attributes count as
- * declarations is the caller's, configurable, choice. Each recognized value
- * becomes one evidence item whose `source` is the attribute name, letting
- * {@link FuseOptions.weights} key on a specific attribute (`"data-rl"`)
- * instead of the whole kind. Empty and unrecognized values are dropped.
+ * (`{ lang: el.getAttribute("lang") }`, `{ "data-rl": … }`). Each recognized
+ * value becomes one evidence item whose `source` is the attribute name,
+ * letting {@link FuseOptions.weights} key on a specific attribute — trust a
+ * curated vendor label above an often-stale inherited `lang`, or silence one
+ * attribute entirely — instead of the whole kind. Empty and unrecognized
+ * values are dropped.
  */
 export function evidenceFromNodeLang(
   attrs: Readonly<Record<string, string | null | undefined>>,
