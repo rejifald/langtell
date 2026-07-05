@@ -1,5 +1,6 @@
 import { evidenceFromHeaders } from "./headers.js";
 import { evidenceFromHtml } from "./html.js";
+import { DEFAULT_NODE_LANG_ATTRIBUTES, evidenceFromNodeLang } from "./node-lang.js";
 import { evidenceFromText } from "./text.js";
 import { fuse, type FuseOptions } from "./fuse.js";
 import type {
@@ -16,8 +17,14 @@ import type {
 
 /** The always-on, zero-dependency producers. The text producer is bound to the
  *  configured candidate roster so its scoring is roster-relative (and so it
- *  abstains when no roster was supplied — its signals need candidates). */
-function builtIns(candidates: readonly LanguageProfile[] | undefined): SyncSource[] {
+ *  abstains when no roster was supplied — its signals need candidates). The
+ *  node-lang producer is bound to the configured declaration-attribute list
+ *  (standard `lang` only, unless the config opts into vendor attributes), and
+ *  reads them from `input.attrs` in configured order. */
+function builtIns(
+  candidates: readonly LanguageProfile[] | undefined,
+  nodeLangAttributes: readonly string[],
+): SyncSource[] {
   return [
     {
       id: "text",
@@ -31,6 +38,16 @@ function builtIns(candidates: readonly LanguageProfile[] | undefined): SyncSourc
       sync: true,
       inputs: ["headers"],
       detect: (i) => evidenceFromHeaders(i.headers),
+    },
+    {
+      id: "node-lang",
+      sync: true,
+      inputs: ["attrs"],
+      detect: (i) => {
+        const declared: Record<string, string | null | undefined> = {};
+        for (const name of nodeLangAttributes) declared[name] = i.attrs?.[name];
+        return evidenceFromNodeLang(declared);
+      },
     },
   ];
 }
@@ -49,7 +66,10 @@ function applicable(source: EvidenceSource, input: DetectInput): boolean {
 export function compile<const E extends readonly EvidenceSource[] = []>(
   config: DetectorConfig<E> = {},
 ): DetectFn<E> {
-  const sources: EvidenceSource[] = [...builtIns(config.candidates), ...(config.engines ?? [])];
+  const sources: EvidenceSource[] = [
+    ...builtIns(config.candidates, config.nodeLangAttributes ?? DEFAULT_NODE_LANG_ATTRIBUTES),
+    ...(config.engines ?? []),
+  ];
   const hasAsync = sources.some((source) => !source.sync);
   const fuseOptions: FuseOptions = {
     weights: config.weights,

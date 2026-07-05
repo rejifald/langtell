@@ -11,17 +11,17 @@ describe("evidenceFromNodeLang", () => {
         kind: "node-lang",
         language: "uk",
         confidence: expect.any(Number) as number,
-        source: "data-rl",
+        source: "node-lang:data-rl",
         value: "uk-UA",
       },
     ]);
   });
 
-  it("emits one item per recognized attribute, source = attribute name", () => {
+  it("emits one item per recognized attribute, source namespaced by attribute name", () => {
     const ev = evidenceFromNodeLang({ "data-rl": "ru", lang: "uk" });
     expect(ev.map((e) => [e.source, e.language])).toEqual([
-      ["data-rl", "ru"],
-      ["lang", "uk"],
+      ["node-lang:data-rl", "ru"],
+      ["node-lang:lang", "uk"],
     ]);
   });
 
@@ -79,10 +79,19 @@ describe("evidenceFromNodeLang + fuse", () => {
     expect(verdict.evidence).toHaveLength(2);
   });
 
-  it("weights can silence a specific attribute by its source id", () => {
+  it("weights can silence a specific attribute by its namespaced source id", () => {
     const verdict = fuse(evidenceFromNodeLang({ "data-rl": "ru" }), {
-      weights: { "data-rl": 0 },
+      weights: { "node-lang:data-rl": 0 },
     });
     expect(verdict.language).toBe("unknown");
+  });
+
+  it("an attribute named like an engine id cannot collide with that engine's weight", () => {
+    // weights.franc targets the franc ENGINE — a data attribute that happens
+    // to be called "franc" lives under node-lang:franc and keeps its own weight.
+    const verdict = fuse(evidenceFromNodeLang({ franc: "ru" }), {
+      weights: { franc: 0 },
+    });
+    expect(verdict.language).toBe("ru");
   });
 });

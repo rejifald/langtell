@@ -73,10 +73,20 @@ export interface LanguageProfile {
 
 export type HeaderBag = Headers | Record<string, string | string[] | undefined | null>;
 
+/** Attribute values of the unit under detection, keyed by attribute name —
+ *  `{ lang: el.getAttribute("lang") }`. Extraction is the caller's job
+ *  (langtell never touches a DOM), including resolving the standard `lang`
+ *  attribute's inheritance when that's wanted: `el.closest("[lang]")`. */
+export type AttrBag = Readonly<Record<string, string | null | undefined>>;
+
 export interface DetectInput {
   text?: string;
   html?: string;
   headers?: HeaderBag;
+  /** The detection subject's own attributes. Enables per-node
+   *  declared-language evidence; which attribute names count is compiled in
+   *  via {@link DetectorConfig.nodeLangAttributes}. */
+  attrs?: AttrBag;
 }
 
 export interface DetectContext {
@@ -84,7 +94,7 @@ export interface DetectContext {
   maxChars?: number;
 }
 
-export type SourceInput = "text" | "html" | "headers";
+export type SourceInput = "text" | "html" | "headers" | "attrs";
 
 /** A synchronous, dependency-free evidence source (script, HTML tags, headers). */
 export interface SyncSource {
@@ -135,6 +145,13 @@ export interface DetectorConfig<E extends readonly EvidenceSource[] = []> {
   engines?: E;
   weights?: Weights;
   earlyExit?: EarlyExit;
+  /** Which of `input.attrs` count as per-node language declarations, in
+   *  evidence order. Defaults to `["lang"]` — the one standardized bearer.
+   *  Vendor conventions are deliberate opt-ins: `["lang", "data-rl"]`
+   *  teaches a detector Google's response-language label. Weigh or silence
+   *  one attribute via its namespaced source id
+   *  (`weights: { "node-lang:data-rl": 0.8 }`). */
+  nodeLangAttributes?: readonly string[];
   /** Forwarded to {@link fuse}. See {@link NonDiscriminatingScript}. Defaults to
    *  `"candidate"` (current behavior); opt into `"unknown"` for a roster-closed,
    *  evidence-only policy. */

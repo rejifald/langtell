@@ -119,6 +119,51 @@ describe("compile — nonDiscriminatingScript: 'unknown' (issue #9, cross-script
   });
 });
 
+describe("compile (per-node attrs)", () => {
+  it("reads the standard lang attribute by default", () => {
+    const detect = compile();
+    expect(detect({ attrs: { lang: "uk-UA" } }).language).toBe("uk");
+  });
+
+  it("ignores vendor attributes unless the detector opted in", () => {
+    const detect = compile();
+    expect(detect({ attrs: { "data-rl": "ru" } }).language).toBe("unknown");
+  });
+
+  it("a detector compiled with a vendor attribute reads it", () => {
+    const detect = compile({ nodeLangAttributes: ["lang", "data-rl"] });
+    expect(detect({ attrs: { "data-rl": "ru" } }).language).toBe("ru");
+  });
+
+  it("a node declaration cannot flip clear script evidence, end to end", () => {
+    const detect = compile({
+      candidates: [uk, ru, en],
+      nodeLangAttributes: ["lang", "data-rl"],
+    });
+    const result = detect({
+      text: "This is a clear English sentence about coding",
+      attrs: { "data-rl": "ru" },
+    });
+    expect(result.language).toBe("en");
+  });
+
+  it("a node declaration decides when the text carries no usable signal", () => {
+    const detect = compile({
+      candidates: [uk, ru, en],
+      nodeLangAttributes: ["lang", "data-rl"],
+    });
+    expect(detect({ attrs: { "data-rl": "ru" } }).language).toBe("ru");
+  });
+
+  it("weights can prefer a curated vendor label over an inherited lang", () => {
+    const detect = compile({
+      nodeLangAttributes: ["lang", "data-rl"],
+      weights: { "node-lang:lang": 0 },
+    });
+    expect(detect({ attrs: { lang: "uk", "data-rl": "ru" } }).language).toBe("ru");
+  });
+});
+
 describe("compile (async path)", () => {
   it("returns a Promise once an async engine is registered", async () => {
     const detect = compile({ engines: [chromeAiEngine] });
