@@ -119,7 +119,14 @@ export type EvidenceSource = SyncSource | AsyncSource;
 export type HasAsync<E extends readonly EvidenceSource[]> =
   Extract<E[number], AsyncSource> extends never ? false : true;
 
-/** Weights keyed by evidence `source` id or `kind`; missing keys use defaults. */
+/** Weights keyed by evidence `source` id or `kind`; missing keys use defaults.
+ *
+ *  A weight is a finite, non-negative multiplier — `0` silences a signal
+ *  entirely (it scores nothing, and a silenced script read no longer pins the
+ *  verdict either). Anything outside that range — `Infinity`, `NaN`, a negative
+ *  number — is not a usable multiplier and is ignored: that key resolves to the
+ *  default weight as if it had not been set. There is no "always wins" weight;
+ *  outrank a signal by weighing it above the others. */
 export type Weights = Partial<Record<string, number>>;
 
 /** How {@link fuse} resolves a *non-discriminating* script read — one whose

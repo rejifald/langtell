@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fuse } from "./fuse.js";
+import { fuse, type FuseOptions } from "./fuse.js";
 import type { LanguageEvidence, LanguageProfile } from "./types.js";
 
 describe("fuse", () => {
@@ -62,6 +62,99 @@ describe("fuse", () => {
     ];
     const result = fuse(evidence, { weights: { "http-content-language": 5 } });
     expect(result.language).toBe("en");
+  });
+});
+
+describe("fuse — a verdict never names a language at confidence 0", () => {
+  // `Classification.confidence` is documented 0..1, and a *named* language at 0
+  // says "this is English, with no confidence at all" — a verdict no caller can
+  // act on, and one no threshold check (`confidence > x`) can catch. Every option
+  // set below has driven the confidence arithmetic into a degenerate case
+  // (`Infinity/Infinity`, `0/0.15`, a NaN score), so they stay pinned here.
+  const optionSets: { label: string; options: FuseOptions }[] = [
+    { label: "no options", options: {} },
+    { label: "an infinite caller weight", options: { weights: { "html-lang": Infinity } } },
+    {
+      label: "an infinite caller weight on the script kind",
+      options: { weights: { "title-script": Infinity } },
+    },
+    { label: "a -Infinity caller weight", options: { weights: { "html-lang": -Infinity } } },
+    { label: "a NaN caller weight", options: { weights: { "html-lang": NaN } } },
+    { label: "a negative caller weight", options: { weights: { "title-script": -1 } } },
+    {
+      label: "a zero caller weight (the signal is silenced)",
+      options: { weights: { "html-lang": 0, "title-script": 0 } },
+    },
+  ];
+
+  const context: LanguageEvidence = {
+    kind: "html-lang",
+    language: "en",
+    confidence: 0.9,
+    source: "html-lang",
+    value: "en",
+  };
+  const scriptRead: LanguageEvidence = {
+    kind: "title-script",
+    language: "uk",
+    confidence: 0.9,
+    source: "title-script",
+    value: "Слава",
+  };
+  // Both the plain-argmax path and the pinned-script fallback compute confidence,
+  // so the invariant has to hold on each.
+  const evidenceSets: Record<string, LanguageEvidence[]> = {
+    "context alone": [context],
+    "a pinning script read alone": [scriptRead],
+    "a pinning script read against competing context": [scriptRead, context],
+  };
+
+  for (const { label, options } of optionSets) {
+    it(`holds with ${label}`, () => {
+      for (const [name, evidence] of Object.entries(evidenceSets)) {
+        const { language, confidence } = fuse(evidence, options);
+        const where = `${name} + ${label} → ${language}`;
+        // "unknown" at 0 is fine — that is what "no verdict" looks like.
+        if (language !== "unknown") expect(confidence, where).toBeGreaterThan(0);
+        expect(confidence, where).toBeGreaterThanOrEqual(0);
+        expect(confidence, where).toBeLessThanOrEqual(1);
+      }
+    });
+  }
+
+  it("ignores an unusable weight rather than honoring it", () => {
+    // Not a stronger "this always wins": `Infinity` is garbage in a weighted sum
+    // (paired with a 0-confidence item it is `NaN`), so the key resolves to the
+    // per-kind default and the verdict is exactly the unweighted one.
+    const baseline = fuse([context, scriptRead]);
+    for (const weight of [Infinity, -Infinity, NaN, -1]) {
+      expect(fuse([context, scriptRead], { weights: { "html-lang": weight } })).toEqual(baseline);
+    }
+  });
+
+  it("still honors a finite weight override of any magnitude", () => {
+    // The contrast with the case above: `1e6` *is* a usable multiplier, so it is
+    // applied in full. (Two context signals, no script read — between context and
+    // a confident script read it is the clear-script guard that decides, not the
+    // weight, however large.)
+    const competing: LanguageEvidence = {
+      kind: "http-content-language",
+      language: "uk",
+      confidence: 0.9,
+      source: "http-content-language",
+      value: "uk",
+    };
+    const result = fuse([context, competing], { weights: { "html-lang": 1e6 } });
+    expect(result.language).toBe("en");
+    expect(result.confidence).toBeGreaterThan(0);
+    expect(result.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it("a zero weight silences a signal, including its power to pin the verdict", () => {
+    // Normally the script read pins `uk` and the context cannot flip it…
+    expect(fuse([scriptRead, context]).language).toBe("uk");
+    // …but weighed to 0 it scores nothing, so it must not veto the context either.
+    expect(fuse([scriptRead, context], { weights: { "title-script": 0 } }).language).toBe("en");
   });
 });
 
