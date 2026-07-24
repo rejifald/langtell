@@ -76,6 +76,9 @@ export type Rung3Resolver<P extends LanguageProfile = LanguageProfile> = (
 
 const CYRILLIC_RE = /\p{Script=Cyrillic}/u;
 const LATIN_RE = /\p{Script=Latin}/u;
+/** Any Unicode letter. Non-global on purpose — tested against one code point at
+ *  a time, so there is no `lastIndex` to reset. */
+const LETTER_RE = /\p{L}/u;
 
 /** A coarse script bucket — the only two the candidate-relative classifier
  *  distinguishes today. `null` means "no letters / undetermined". */
@@ -95,12 +98,23 @@ export const RUNG3_MIN_LENGTH = 24;
  * Kept as separate simple patterns (applied in order — schemes/www before bare
  * domains) rather than one big alternation, so each stays readable. ASCII-only
  * `[a-z0-9-]` in the domain pattern means a Cyrillic word is never mistaken for
- * a domain.
+ * a domain, and its last label must be an alphabetic TLD so ordinary prose is
+ * not eaten (see the pattern's own comment).
  */
 const NOISE_PATTERNS: readonly RegExp[] = [
   /\bhttps?:\/\/\S+/gi, // full URLs
   /\bwww\.\S+/gi, // www.… without a scheme
-  /\b[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?/gi, // bare domains (example.com/path)
+  // Bare domains (example.com/path). The final label MUST be an alphabetic TLD
+  // of ≥2 chars, and the pattern is deliberately case-SENSITIVE (no `i` flag):
+  // without both constraints any two alphanumeric runs joined by a dot are
+  // deleted, which silently eats the very common missing-space-after-a-period
+  // in scraped titles ("The end.The next one" → "The   next one", "e.g. this"),
+  // and those words then contribute nothing to the script vote or any rung.
+  // Two accepted residuals: an all-lowercase sentence join ("the end.the next
+  // one") is indistinguishable from a domain and is still stripped, and a
+  // mixed-case hostname ("Example.COM") is no longer stripped — the price of
+  // dropping `i`.
+  /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:[a-z]{2,})(?:\/\S*)?\b/g,
   /[@#][\p{L}\p{N}_]+/gu, // @handles and #hashtags
 ];
 
@@ -244,15 +258,53 @@ function membershipFor(
   return candidates.map((c) => ({ code: c.code, set: new Set(pick(c)) }));
 }
 
-/** Rung 1 — characters (alphabet + orthographic {@link LanguageProfile.marks})
- *  distinctive within the scoped candidate set. */
+/**
+ * Occurrences of `marks` that sit BETWEEN two letters — the only position where
+ * {@link LanguageProfile.marks} carries the documented signal (the intra-word
+ * apostrophe uk/be use where ru uses ъ or nothing). The same code points are
+ * overwhelmingly punctuation everywhere else (U+0027/U+2019 as quotes), so a
+ * whole-text tally reads `Фильм 'Брат' вышел` as Ukrainian and — because rung 1
+ * runs first — short-circuits the far more precise word rungs.
+ *
+ * Scanned by code point against the set the scoped profiles actually declare,
+ * rather than a regex built from that data, so profile text never has to be
+ * escaped into a character class.
+ */
+function intraWordMarks(text: string, marks: ReadonlySet<string>): string[] {
+  if (marks.size === 0) return [];
+  const chars = [...text];
+  const found: string[] = [];
+  for (let i = 1; i < chars.length - 1; i += 1) {
+    const ch = chars[i];
+    if (ch === undefined || !marks.has(ch)) continue;
+    const prev = chars[i - 1];
+    const next = chars[i + 1];
+    if (prev !== undefined && next !== undefined && LETTER_RE.test(prev) && LETTER_RE.test(next)) {
+      found.push(ch);
+    }
+  }
+  return found;
+}
+
+/** Rung 1 — characters distinctive within the scoped candidate set: alphabet
+ *  letters wherever they appear, plus orthographic {@link LanguageProfile.marks}
+ *  counted ONLY between two letters. Marks are tallied in their own pass against
+ *  a marks-only membership, so distinctiveness stays candidate-relative exactly
+ *  as for letters — a mark carried by ≥2 scoped candidates (uk and be both have
+ *  one) is owned by neither and cancels out. */
 function letterRung(text: string, scoped: readonly LanguageProfile[]): RungVerdict | null {
-  const r = leader(
-    tally(
-      text.toLowerCase(),
-      membershipFor(scoped, (p) => p.alphabet + (p.marks ?? "")),
-    ),
+  const lower = text.toLowerCase();
+  const scores = tally(
+    lower,
+    membershipFor(scoped, (p) => p.alphabet),
   );
+  const markSets = membershipFor(scoped, (p) => p.marks ?? "");
+  const declared = new Set<string>();
+  for (const m of markSets) for (const ch of m.set) declared.add(ch);
+  for (const [code, count] of tally(intraWordMarks(lower, declared), markSets)) {
+    scores.set(code, (scores.get(code) ?? 0) + count);
+  }
+  const r = leader(scores);
   return r ? { language: r.code, margin: r.margin, rung: 1 } : null;
 }
 
@@ -282,7 +334,9 @@ function wordRung(
  * stricter profile (e.g. `words` required) can pass its own resolver directly,
  * with no adapter — the resolver sees exactly the profiles the caller passed.
  * `P` defaults to {@link LanguageProfile}, so the bare two-argument form and
- * every existing call site are unchanged.
+ * every existing call site are unchanged. It is invoked only when the
+ * noise-stripped text clears {@link RUNG3_MIN_LENGTH}; below that floor the
+ * classifier abstains rather than asking for a trigram guess.
  */
 export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
   text: string,
@@ -310,9 +364,14 @@ export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
   const tokens = tokenize(cleaned);
   if (tokens.length === 0) return UNKNOWN;
 
+  // Rung 3 only runs past {@link RUNG3_MIN_LENGTH}: the floor is the whole
+  // reason trigram evidence is trustworthy, so it is enforced here rather than
+  // left to each injected resolver. Measured on `cleaned` — stripping only
+  // shortens, so a sample that clears the floor after noise removal genuinely
+  // has that many characters of prose.
   const byWord =
     wordRung(tokens, scoped, "function", "2a") ??
     wordRung(tokens, scoped, "frequent", "2b") ??
-    rung3?.(cleaned, scoped);
+    (rung3 !== undefined && cleaned.length >= RUNG3_MIN_LENGTH ? rung3(cleaned, scoped) : null);
   return byWord ? { ...byWord, discriminating } : UNKNOWN;
 }

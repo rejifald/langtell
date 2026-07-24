@@ -6,18 +6,16 @@
  * OPTIONAL peer dependency — install it only if you use this engine.
  *
  * The engine is a candidate-relative *backstop*: franc is scoped to the
- * candidates' ISO 639-3 codes (`only`), runs only on text past a length floor
- * where trigrams are reliable, and emits `kind: "franc"` evidence with franc's
- * own score-gap as the confidence. It abstains (emits nothing) when fewer than
- * two candidates carry an `iso6393`, when franc returns `und`, or when the
- * sample is too short.
+ * candidates' ISO 639-3 codes (`only`), runs only on text past the shared
+ * `RUNG3_MIN_LENGTH` floor where trigrams are reliable, and emits `kind:
+ * "franc"` evidence with franc's own score-gap as the confidence. It abstains
+ * (emits nothing) when fewer than two candidates carry an `iso6393`, when franc
+ * returns `und`, or when the sample is too short.
  */
 import { francAll } from "franc";
 import type { LanguageEvidence, LanguageProfile, SyncSource } from "./types.js";
-import { scopeCandidates } from "./internal/classify.js";
+import { RUNG3_MIN_LENGTH, scopeCandidates } from "./internal/classify.js";
 
-/** Minimum sample length, in characters. Below this trigrams are too noisy. */
-const RUNG_MIN_LENGTH = 24;
 /** Floor franc itself uses to bail to `und` rather than guess. */
 const FRANC_MIN_LENGTH = 10;
 /** Cap on text length sent to franc (longer adds cost, not accuracy). */
@@ -53,7 +51,9 @@ export function evidenceFromFranc(
   text: string | undefined,
   candidates: readonly LanguageProfile[] | undefined,
 ): LanguageEvidence[] {
-  if (text === undefined || text.trim().length < RUNG_MIN_LENGTH) return [];
+  // The same floor rung 3 of the ladder classifier enforces — imported, not
+  // redeclared, so the two engines can never drift apart.
+  if (text === undefined || text.trim().length < RUNG3_MIN_LENGTH) return [];
   if (candidates === undefined || candidates.length === 0) return [];
 
   const scoped = scopeCandidates(text, candidates);

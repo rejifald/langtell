@@ -109,6 +109,30 @@ describe("evidenceFromText — intra-word apostrophe (uk/be keep-signal)", () =>
   });
 });
 
+describe("evidenceFromText — quotes are not the uk/be apostrophe", () => {
+  // `marks` is the INTRA-WORD apostrophe; U+0027/U+2019 as quotation marks are
+  // punctuation. Counted anywhere, they made rung 1 (which runs first) emit a
+  // high-confidence `uk` for plain Russian prose — evidence strong enough to pin
+  // the fused verdict past any page/header context.
+  it("single-quoted Russian is ru, not uk", () => {
+    expect(lang("Фильм 'Брат' вышел", [uk, ru])).toBe("ru");
+    expect(lang("Фильм 'Брат' вышел", CANDIDATES)).not.toBe("uk");
+  });
+
+  it("typographic quotes (U+2019) are ru, not uk", () => {
+    expect(lang("Он сказал ’привет’", [uk, ru])).toBe("ru");
+    expect(lang("Он сказал ’привет’", CANDIDATES)).toBe("ru");
+  });
+
+  it("mixed quotes still reach the word rungs", () => {
+    expect(lang("«Что» и 'это'", CANDIDATES)).toBe("ru");
+  });
+
+  it("the quoteless control is unchanged", () => {
+    expect(lang("Фильм Брат вышел", [uk, ru])).toBe("ru");
+  });
+});
+
 describe("evidenceFromText — rung 2 (words)", () => {
   it("standalone `и` → ru (letter shared, word is not)", () => {
     expect(lang("Кофе и чай", [uk, ru])).toBe("ru");

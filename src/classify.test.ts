@@ -66,6 +66,25 @@ describe("langtell/classify — exposed scoping seams", () => {
     expect(RUNG3_MIN_LENGTH).toBe(24);
   });
 
+  it("classifyBySnippet enforces the floor on the injected resolver", () => {
+    // The floor is a contract of the ladder, not homework for each resolver: an
+    // injected rung 3 must never be asked about a sample too short to trust.
+    const seen: string[] = [];
+    const resolver = (text: string): { language: string; margin: number; rung: Rung } => {
+      seen.push(text);
+      return { language: "ru", margin: 0.5, rung: FRANC_RUNG };
+    };
+    expect(classifyBySnippet("аб вг", [uk, ru], resolver).language).toBe("unknown");
+    expect(seen).toEqual([]);
+
+    const long = "аб вг".padEnd(RUNG3_MIN_LENGTH, " ");
+    expect(classifyBySnippet(long, [uk, ru], resolver)).toMatchObject({
+      language: "ru",
+      rung: FRANC_RUNG,
+    });
+    expect(seen).toHaveLength(1);
+  });
+
   it("scopeCandidates narrows a roster to the text's dominant script", () => {
     // Cyrillic text keeps the Cyrillic candidates, drops the lone Latin one.
     expect(

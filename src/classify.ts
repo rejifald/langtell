@@ -30,7 +30,10 @@
  * rather than re-derived: {@link scopeCandidates} narrows a roster to the text's
  * dominant script exactly as `classifyBySnippet` does internally, and
  * {@link RUNG3_MIN_LENGTH} is the length floor below which a trigram verdict is
- * too noisy to trust.
+ * too noisy to trust. `classifyBySnippet` enforces that floor itself — an
+ * injected `rung3` resolver is never invoked on shorter (noise-stripped) text —
+ * so the constant is exported for off-path scoping, not as a check each resolver
+ * must repeat.
  */
 export {
   classifyBySnippet,

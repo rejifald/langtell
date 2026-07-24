@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFrancEngine, evidenceFromFranc } from "./franc.js";
+import { RUNG3_MIN_LENGTH } from "./classify.js";
 import { be, bg, en, ru, uk } from "./profiles.js";
 import type { LanguageProfile } from "./types.js";
 
@@ -29,6 +30,15 @@ describe("evidenceFromFranc", () => {
 
   it("abstains below the length floor", () => {
     expect(evidenceFromFranc("кот", [ukRaw, ruRaw])).toEqual([]);
+  });
+
+  it("uses the ladder's RUNG3_MIN_LENGTH as its floor (one constant, not two)", () => {
+    const short = "а".repeat(RUNG3_MIN_LENGTH - 1);
+    const long = "Собака медленно бежала домой по дороге";
+    expect(short.length).toBe(RUNG3_MIN_LENGTH - 1);
+    expect(long.length).toBeGreaterThanOrEqual(RUNG3_MIN_LENGTH);
+    expect(evidenceFromFranc(short, [ukRaw, ruRaw])).toEqual([]);
+    expect(evidenceFromFranc(long, [ukRaw, ruRaw])).not.toEqual([]);
   });
 
   it("abstains when fewer than two candidates carry an iso6393 code", () => {
