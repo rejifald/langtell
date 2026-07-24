@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fuse } from "./fuse.js";
+import { fuse, type FuseOptions } from "./fuse.js";
 import type { LanguageEvidence, LanguageProfile } from "./types.js";
 
 describe("fuse", () => {
@@ -288,5 +288,186 @@ describe("fuse — nonDiscriminatingScript: context in a different script may no
     const evidence = [latinTitle, pageContext("http-content-language", "uk")];
     // No roster ⇒ scripts can't be derived ⇒ no cut ⇒ uk context wins as before.
     expect(fuse(evidence, { nonDiscriminatingScript: "unknown" }).language).toBe("uk");
+  });
+});
+
+describe("fuse — a silenced signal cannot pin either (weights: 0)", () => {
+  const uk: LanguageProfile = { code: "uk", alphabet: "абвгґдеєжзиіїйклмнопрстуфхцчшщьюя" };
+  const ru: LanguageProfile = { code: "ru", alphabet: "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" };
+
+  /** The issue-28 repro: a confident `uk` script read (the score the classifier
+   *  gives "Кофе і чай" against a `[uk, ru]` roster) against an `ru` page tag.
+   *  Left alone the script read pins and wins; silenced, only the tag is left. */
+  function scriptVsRuPage(
+    kind: "title-script" | "franc" | "chrome-ai",
+    source: string = kind,
+  ): LanguageEvidence[] {
+    return [
+      { kind, language: "uk", confidence: 0.6875, source, value: "Кофе і чай" },
+      { kind: "html-lang", language: "ru", confidence: 0.9, source: "html-lang", value: "ru" },
+    ];
+  }
+
+  it("at its default weight, each script kind pins and wins (behavior unchanged)", () => {
+    for (const kind of ["title-script", "franc", "chrome-ai"] as const) {
+      expect(fuse(scriptVsRuPage(kind), { candidates: [uk, ru] }).language).toBe("uk");
+    }
+  });
+
+  it("weights { 'title-script': 0 } hands the verdict to the page tag", () => {
+    const result = fuse(scriptVsRuPage("title-script"), {
+      candidates: [uk, ru],
+      weights: { "title-script": 0 },
+    });
+    expect(result.language).toBe("ru");
+    expect(result.confidence).toBeGreaterThan(0);
+    // Silenced for the verdict, still present in the audit trail.
+    expect(result.evidence).toHaveLength(2);
+  });
+
+  it("weights { franc: 0 } hands the verdict to the page tag", () => {
+    const result = fuse(scriptVsRuPage("franc"), {
+      candidates: [uk, ru],
+      weights: { franc: 0 },
+    });
+    expect(result.language).toBe("ru");
+    expect(result.confidence).toBeGreaterThan(0);
+  });
+
+  it("weights { 'chrome-ai': 0 } hands the verdict to the page tag", () => {
+    const result = fuse(scriptVsRuPage("chrome-ai"), {
+      candidates: [uk, ru],
+      weights: { "chrome-ai": 0 },
+    });
+    expect(result.language).toBe("ru");
+    expect(result.confidence).toBeGreaterThan(0);
+  });
+
+  it("silencing by namespaced source id disqualifies the pin too", () => {
+    const evidence = scriptVsRuPage("chrome-ai", "chrome-ai:v2");
+    expect(fuse(evidence, { candidates: [uk, ru] }).language).toBe("uk");
+    expect(fuse(evidence, { candidates: [uk, ru], weights: { "chrome-ai:v2": 0 } }).language).toBe(
+      "ru",
+    );
+  });
+
+  it("a negative weight is not evidence either — it cannot pin", () => {
+    const result = fuse(scriptVsRuPage("title-script"), {
+      candidates: [uk, ru],
+      weights: { "title-script": -1 },
+    });
+    expect(result.language).toBe("ru");
+    expect(result.confidence).toBeGreaterThan(0);
+  });
+
+  it("silencing one script read leaves the others free to pin", () => {
+    const evidence: LanguageEvidence[] = [
+      {
+        kind: "title-script",
+        language: "en",
+        confidence: 0.9,
+        source: "title-script",
+        value: "Hi",
+      },
+      { kind: "franc", language: "uk", confidence: 0.9, source: "franc", value: "uk" },
+      { kind: "html-lang", language: "ru", confidence: 0.9, source: "html-lang", value: "ru" },
+    ];
+    expect(fuse(evidence, { weights: { "title-script": 0 } }).language).toBe("uk");
+  });
+
+  it("silencing a context kind keeps working as it always has", () => {
+    const evidence: LanguageEvidence[] = [
+      {
+        kind: "explicit-locale",
+        language: "en",
+        confidence: 0.9,
+        source: "explicit-locale",
+        value: "en",
+      },
+      { kind: "html-lang", language: "uk", confidence: 0.9, source: "html-lang", value: "uk" },
+    ];
+    expect(fuse(evidence).language).toBe("en");
+    expect(fuse(evidence, { weights: { "explicit-locale": 0 } }).language).toBe("uk");
+  });
+});
+
+describe("fuse — a verdict never names a language at confidence 0", () => {
+  const uk: LanguageProfile = { code: "uk", alphabet: "абвгґдеєжзиіїйклмнопрстуфхцчшщьюя" };
+  const ru: LanguageProfile = { code: "ru", alphabet: "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" };
+  const en: LanguageProfile = { code: "en", alphabet: "abcdefghijklmnopqrstuvwxyz" };
+
+  it("a pinned read whose tally is cancelled out resolves to unknown, not to itself", () => {
+    const evidence: LanguageEvidence[] = [
+      { kind: "title-script", language: "uk", confidence: 0.9, source: "title-script", value: "…" },
+      { kind: "franc", language: "uk", confidence: 0.9, source: "franc", value: "uk" },
+    ];
+    // franc's negative weight cancels the pinned read's score. Naming `uk` off a
+    // non-positive tally reports a language the confidence itself denies — and a
+    // negative tally would even invert the ratio into a false 1.
+    const result = fuse(evidence, { weights: { franc: -1.5 } });
+    expect(result.language).toBe("unknown");
+    expect(result.confidence).toBe(0);
+  });
+
+  it("holds across weighted, silenced, and negated evidence sets", () => {
+    const script = (
+      kind: "title-script" | "franc" | "chrome-ai",
+      language: string,
+      confidence: number,
+    ): LanguageEvidence => ({ kind, language, confidence, source: kind, value: language });
+
+    const context = (
+      kind: "html-lang" | "explicit-locale" | "http-content-language",
+      language: string,
+      confidence: number,
+    ): LanguageEvidence => ({ kind, language, confidence, source: kind, value: language });
+
+    const loneLatin: LanguageEvidence = {
+      kind: "title-script",
+      language: "en",
+      confidence: 0.95,
+      source: "title-script",
+      value: "Inception",
+      discriminating: false,
+    };
+
+    const evidenceSets: readonly LanguageEvidence[][] = [
+      [],
+      [script("title-script", "uk", 0.6875), context("html-lang", "ru", 0.9)],
+      [script("franc", "uk", 0.6875), context("html-lang", "ru", 0.9)],
+      [script("chrome-ai", "uk", 0.6875), context("html-lang", "ru", 0.9)],
+      [script("title-script", "uk", 0.9), script("franc", "uk", 0.9)],
+      [script("title-script", "ru", 0.7), context("html-lang", "uk", 0.9)],
+      [loneLatin, context("html-lang", "uk", 0.95)],
+      [context("explicit-locale", "en", 0.9), context("http-content-language", "uk", 0.9)],
+    ];
+
+    const optionSets: readonly FuseOptions[] = [
+      {},
+      { candidates: [uk, ru, en] },
+      { weights: { "title-script": 0 } },
+      { weights: { franc: 0 } },
+      { weights: { "chrome-ai": 0 } },
+      { weights: { "title-script": 0, franc: 0, "chrome-ai": 0, "html-lang": 0 } },
+      { weights: { "title-script": -1, franc: -1.5, "explicit-locale": -0.5 } },
+      { nonDiscriminatingScript: "unknown", candidates: [uk, en] },
+      {
+        nonDiscriminatingScript: "unknown",
+        candidates: [uk, en],
+        weights: { "title-script": 0, "chrome-ai": 0 },
+      },
+    ];
+
+    let named = 0;
+    for (const evidence of evidenceSets) {
+      for (const options of optionSets) {
+        const result = fuse(evidence, options);
+        if (result.language === "unknown") continue;
+        named += 1;
+        expect(result.confidence, JSON.stringify({ evidence, options })).toBeGreaterThan(0);
+      }
+    }
+    // The sweep must actually reach named verdicts — it must not pass vacuously.
+    expect(named).toBeGreaterThan(0);
   });
 });

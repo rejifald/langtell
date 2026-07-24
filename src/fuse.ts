@@ -9,6 +9,10 @@ import { normalizeBCP47 } from "./internal/bcp47.js";
 import { scriptOfProfile, type ScriptName } from "./internal/classify.js";
 
 export interface FuseOptions {
+  /** Weigh — or silence — one signal, keyed by its `source` id or its `kind`
+   *  (a `source` key wins). A weight of `0` removes the signal from the verdict
+   *  entirely: it neither scores nor pins the winner, though it stays in the
+   *  returned evidence trail. */
   weights?: Weights;
   /** The candidate roster. When present, incoming evidence tags are normalized
    *  into it (`uk-UA` → `uk`, `ua` → `uk`) so context signals (page/header
@@ -38,13 +42,26 @@ const DEFAULT_KIND_WEIGHT: Record<string, number> = {
   "html-lang": 0.5,
 };
 
+/** The one reader of the weight table: a caller override keyed by `source` id,
+ *  else one keyed by `kind`, else the per-kind default, else a neutral 0.5.
+ *  Both the tally and the script pin weigh evidence through this, so the two
+ *  cannot drift — `weights: { franc: 0 }` deletes franc from the verdict wholesale
+ *  rather than only from the sum. Weights are not clamped: an override above 1
+ *  legitimately amplifies a signal. */
+function weigher(weights: Weights): (item: LanguageEvidence) => number {
+  return (item) =>
+    weights[item.source] ?? weights[item.kind] ?? DEFAULT_KIND_WEIGHT[item.kind] ?? 0.5;
+}
+
 /** Evidence kinds that constitute *clear script evidence* — a verdict the text
  *  classifier or an on-device model reached by actually reading the string. The
- *  guard below forbids weaker page/header *context* from flipping these. */
+ *  guard below forbids weaker page/header *context* from flipping these — but
+ *  only for a read the caller has left weighted (see {@link weigher}). */
 const SCRIPT_KINDS = new Set<string>(["title-script", "franc", "chrome-ai"]);
 
 /** A script verdict this confident is treated as settled — context may add to it
- *  but must not flip the winner to a different language. */
+ *  but must not flip the winner to a different language. Confidence alone does
+ *  not settle it: a read weighted to zero is not evidence, so it cannot pin. */
 const SCRIPT_CONFIDENCE_FLOOR = 0.6;
 
 const MIN_WINNING_SCORE = 0.35;
@@ -60,7 +77,9 @@ const MIN_MARGIN = 0.12;
  *  3. Apply the guard **context must never override clear script evidence**: when
  *     the text classifier (or an on-device model) confidently read one language,
  *     weaker page/header context for a *different* language cannot win — a
- *     Ukrainian page chrome does not make a Latin/English title Ukrainian.
+ *     Ukrainian page chrome does not make a Latin/English title Ukrainian. A
+ *     signal the caller silenced (weight `0`) is not evidence at all: it neither
+ *     scores in step 2 nor guards in step 3.
  */
 export function fuse(
   evidence: readonly LanguageEvidence[],
@@ -81,29 +100,37 @@ export function fuse(
       ? filterForUnknownMode(normalized, options.candidates)
       : normalized;
 
+  const weightOf = weigher(weights);
+
   const scores = new Map<string, number>();
   for (const item of scoring) {
     if (item.language === "unknown") continue;
-    const weight =
-      weights[item.source] ?? weights[item.kind] ?? DEFAULT_KIND_WEIGHT[item.kind] ?? 0.5;
-    scores.set(item.language, (scores.get(item.language) ?? 0) + clamp01(item.confidence) * weight);
+    const contribution = clamp01(item.confidence) * weightOf(item);
+    scores.set(item.language, (scores.get(item.language) ?? 0) + contribution);
   }
 
-  // The context-vs-script guard: a confident script read pins the winner.
-  const pinned = confidentScriptLanguage(scoring);
+  // The context-vs-script guard: a confident script read pins the winner. The pin
+  // reads the same weighted view as the tally, so a signal the caller silenced
+  // (weight `0`) cannot pin what it is not allowed to score.
+  const pinned = confidentScriptLanguage(scoring, weightOf);
 
   const { best, bestScore, secondScore } = argmax(scores, pinned);
 
   if (best === null || bestScore < MIN_WINNING_SCORE || bestScore - secondScore < MIN_MARGIN) {
     // A pinned script language still wins even on a thin margin — clear script
-    // evidence is never demoted to "unknown" by competing context.
-    if (pinned !== null && scores.has(pinned)) {
+    // evidence is never demoted to "unknown" by competing context. It must have
+    // actually scored, though: naming a language whose tally is 0 (or, with a
+    // negative caller weight, below it) would report a verdict the result's own
+    // confidence contradicts. "unknown" is the honest answer there.
+    if (pinned !== null) {
       const score = scores.get(pinned) ?? 0;
-      return {
-        language: pinned,
-        confidence: clamp01(score / (score + 0.15)),
-        evidence: [...normalized],
-      };
+      if (score > 0) {
+        return {
+          language: pinned,
+          confidence: clamp01(score / (score + 0.15)),
+          evidence: [...normalized],
+        };
+      }
     }
     return { language: "unknown", confidence: clamp01(bestScore), evidence: [...normalized] };
   }
@@ -222,13 +249,22 @@ function isNeutralized(item: LanguageEvidence, all: readonly LanguageEvidence[])
 }
 
 /** The language of a *clear script* read confident enough to pin the verdict, or
- *  `null` when none qualifies. When two script reads disagree, the higher-
- *  confidence one pins (a tie leaves nothing pinned — argmax decides normally). */
-function confidentScriptLanguage(evidence: readonly LanguageEvidence[]): string | null {
+ *  `null` when none qualifies. A read must carry positive weight to qualify: a
+ *  caller who silenced a source (`weights: { "title-script": 0 }`, or a negative
+ *  weight) has declared it not evidence, and evidence that scores nothing must
+ *  not decide the verdict — least of all by capping every rival at its own zero.
+ *  Among the qualifying reads the most confident pins; when two disagree at equal
+ *  confidence nothing is pinned and argmax decides normally. */
+function confidentScriptLanguage(
+  evidence: readonly LanguageEvidence[],
+  weightOf: (item: LanguageEvidence) => number,
+): string | null {
   let best: string | null = null;
   let bestConfidence = 0;
   for (const item of evidence) {
     if (item.language === "unknown" || !SCRIPT_KINDS.has(item.kind)) continue;
+    // `!(w > 0)` rather than `w <= 0` so a NaN weight is disqualified too.
+    if (!(weightOf(item) > 0)) continue;
     const c = clamp01(item.confidence);
     if (c < SCRIPT_CONFIDENCE_FLOOR) continue;
     if (c > bestConfidence) {
@@ -247,6 +283,10 @@ function confidentScriptLanguage(evidence: readonly LanguageEvidence[]): string 
  * *other* language's score may only come from context kinds; that score is
  * capped so it can never exceed the pinned language. This enforces the guard
  * without discarding the context from the audit trail.
+ *
+ * The cap is why only a *weighted* read may pin: a pin scoring 0 would flatten
+ * every rival to 0 with it, leaving nothing to win. See
+ * {@link confidentScriptLanguage}.
  */
 function argmax(
   scores: Map<string, number>,
