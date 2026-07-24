@@ -47,6 +47,9 @@ const SCRIPT_KINDS = new Set<string>(["title-script", "franc", "chrome-ai"]);
  *  but must not flip the winner to a different language. */
 const SCRIPT_CONFIDENCE_FLOOR = 0.6;
 
+/** Weight for a kind absent from {@link DEFAULT_KIND_WEIGHT}. */
+const FALLBACK_KIND_WEIGHT = 0.5;
+
 const MIN_WINNING_SCORE = 0.35;
 const MIN_MARGIN = 0.12;
 
@@ -84,24 +87,25 @@ export function fuse(
   const scores = new Map<string, number>();
   for (const item of scoring) {
     if (item.language === "unknown") continue;
-    const weight =
-      weights[item.source] ?? weights[item.kind] ?? DEFAULT_KIND_WEIGHT[item.kind] ?? 0.5;
+    const weight = weightFor(item, weights);
     scores.set(item.language, (scores.get(item.language) ?? 0) + clamp01(item.confidence) * weight);
   }
 
   // The context-vs-script guard: a confident script read pins the winner.
-  const pinned = confidentScriptLanguage(scoring);
+  const pinned = confidentScriptLanguage(scoring, weights);
 
   const { best, bestScore, secondScore } = argmax(scores, pinned);
 
   if (best === null || bestScore < MIN_WINNING_SCORE || bestScore - secondScore < MIN_MARGIN) {
     // A pinned script language still wins even on a thin margin — clear script
-    // evidence is never demoted to "unknown" by competing context.
-    if (pinned !== null && scores.has(pinned)) {
-      const score = scores.get(pinned) ?? 0;
+    // evidence is never demoted to "unknown" by competing context. The score must
+    // be positive, not merely present: a language that scored nothing is not a
+    // verdict, and naming it here would be naming it at confidence 0.
+    const pinnedScore = pinned !== null ? (scores.get(pinned) ?? 0) : 0;
+    if (pinned !== null && pinnedScore > 0) {
       return {
         language: pinned,
-        confidence: clamp01(score / (score + 0.15)),
+        confidence: clamp01(pinnedScore / (pinnedScore + 0.15)),
         evidence: [...normalized],
       };
     }
@@ -113,6 +117,42 @@ export function fuse(
     confidence: clamp01(bestScore / (bestScore + secondScore + 0.15)),
     evidence: [...normalized],
   };
+}
+
+/**
+ * The multiplier for one evidence item: the caller's override by `source`, then
+ * by `kind`, then the per-kind default.
+ *
+ * An override that is not a *usable* multiplier — not a finite number, or
+ * negative — is **ignored**, and resolution falls through to the next step as if
+ * the caller had not set it. Such a value is garbage input, not a stronger way to
+ * say "this signal always wins": `Infinity` has no coherent meaning in a weighted
+ * sum (against a 0-confidence item it yields `NaN`, which makes its language
+ * unrankable) and it collapses the confidence ratio below to `Infinity/Infinity`;
+ * a negative weight scores evidence *against* its own language, which this model
+ * has no meaning for. Honoring either would name a language at a confidence the
+ * `0..1` contract forbids, so the documented default is used instead.
+ *
+ * `0` **is** usable and is honored: it is how a caller silences a signal.
+ *
+ * Every weight this returns is therefore finite and ≥ 0, so — with confidences
+ * clamped to `0..1` — every score is finite and ≥ 0 and the confidence ratios in
+ * {@link fuse} are always well-defined.
+ */
+function weightFor(item: LanguageEvidence, weights: Weights): number {
+  return (
+    usableWeight(weights[item.source]) ??
+    usableWeight(weights[item.kind]) ??
+    DEFAULT_KIND_WEIGHT[item.kind] ??
+    FALLBACK_KIND_WEIGHT
+  );
+}
+
+/** The value itself when it can serve as a weight (finite, non-negative), else
+ *  `undefined` so the caller's `??` chain falls through to the default. */
+function usableWeight(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 /** Normalize each item's tag into the roster's code space (BCP-47-aware). Items
@@ -223,12 +263,19 @@ function isNeutralized(item: LanguageEvidence, all: readonly LanguageEvidence[])
 
 /** The language of a *clear script* read confident enough to pin the verdict, or
  *  `null` when none qualifies. When two script reads disagree, the higher-
- *  confidence one pins (a tie leaves nothing pinned — argmax decides normally). */
-function confidentScriptLanguage(evidence: readonly LanguageEvidence[]): string | null {
+ *  confidence one pins (a tie leaves nothing pinned — argmax decides normally).
+ *
+ *  A read the caller weighed to `0` is silenced *here too*: it contributes no
+ *  score, so it must not veto the rest of the evidence either. */
+function confidentScriptLanguage(
+  evidence: readonly LanguageEvidence[],
+  weights: Weights,
+): string | null {
   let best: string | null = null;
   let bestConfidence = 0;
   for (const item of evidence) {
     if (item.language === "unknown" || !SCRIPT_KINDS.has(item.kind)) continue;
+    if (weightFor(item, weights) === 0) continue;
     const c = clamp01(item.confidence);
     if (c < SCRIPT_CONFIDENCE_FLOOR) continue;
     if (c > bestConfidence) {
