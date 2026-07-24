@@ -11,6 +11,11 @@
  *   - `downloading`  — same reasoning; wait for the model to land.
  *   - `unavailable`  — Chrome's flat-out no. Skip.
  *
+ * The gate is enforced inside `detect` itself, not only via `isAvailable()`:
+ * the engine must be safe to call directly, or under any host that forgets to
+ * consult the optional gate. `create()` — the call that would kick off the
+ * download — is never reached unless availability is `available`.
+ *
  * Emits `kind: "chrome-ai"` evidence with the model's own confidence. An
  * `AsyncSource`: registering it flips the compiled `detect` to `Promise`-typed.
  */
@@ -88,9 +93,21 @@ export function createChromeAiEngine(): AsyncSource {
     async detect(input, ctx: DetectContext = {}): Promise<LanguageEvidence[]> {
       const text = input.text;
       if (text === undefined || text.trim().length === 0) return [];
+      // `ctx.signal` is re-checked around every await below: an aborted
+      // detection throws the signal's reason rather than returning a result the
+      // caller no longer wants.
+      ctx.signal?.throwIfAborted();
+      // The engine's own gate. `checkAvailability()` caches, so this costs at
+      // most one `availability()` probe per instance — and it guarantees we
+      // never reach `create()` (the download trigger) for a merely
+      // `downloadable` model, whatever the caller did or did not check.
+      if (!(await checkAvailability())) return [];
+      ctx.signal?.throwIfAborted();
       const session = await getSession();
+      ctx.signal?.throwIfAborted();
       const sample = text.slice(0, ctx.maxChars ?? DEFAULT_MAX_CHARS);
       const results = await session.detect(sample);
+      ctx.signal?.throwIfAborted();
       const top = results[0];
       if (!top || top.confidence < CONFIDENCE_THRESHOLD) return [];
       return [

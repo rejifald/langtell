@@ -4,6 +4,7 @@ import { DEFAULT_NODE_LANG_ATTRIBUTES, evidenceFromNodeLang } from "./node-lang.
 import { evidenceFromText } from "./text.js";
 import { fuse, type FuseOptions } from "./fuse.js";
 import type {
+  AsyncSource,
   Classification,
   DetectContext,
   DetectFn,
@@ -57,6 +58,48 @@ function applicable(source: EvidenceSource, input: DetectInput): boolean {
   return source.inputs.every((key) => input[key] !== undefined);
 }
 
+/** Run one sync source.
+ *
+ *  `contained` marks code the library does not own — the opt-in engines from
+ *  `config.engines`. Those are optional by construction, so a throw there costs
+ *  only their evidence: the detection still returns the verdict the remaining
+ *  sources support. The built-in producers are deliberately *not* contained: a
+ *  throw in `text`/`html`/`headers`/`node-lang` is a bug in langtell, and
+ *  swallowing it would launder that bug into a silently thinner verdict. */
+function runSync(source: SyncSource, input: DetectInput, contained: boolean): LanguageEvidence[] {
+  if (!contained) return source.detect(input);
+  try {
+    return source.detect(input);
+  } catch {
+    return [];
+  }
+}
+
+/** Run one async source behind its isolation boundary. Containment is
+ *  unconditional here: every async source is a registered engine, since the
+ *  built-in producers are all sync.
+ *
+ *  Everything the engine controls happens *inside* the `try` — the optional
+ *  {@link AsyncSource.isAvailable} gate (an engine that says no is skipped
+ *  entirely, so chrome-ai's "never trigger a model download" contract holds no
+ *  matter who drives it) and the `detect()` call itself. Calling `detect` inside
+ *  the boundary is what contains an engine that throws *synchronously*: a plain
+ *  (non-`async`) function returning a promise satisfies `AsyncSource.detect`,
+ *  and `Promise.resolve(source.detect(...)).catch(...)` evaluates the call
+ *  before any guard exists. */
+async function runAsync(
+  source: AsyncSource,
+  input: DetectInput,
+  ctx: DetectContext,
+): Promise<LanguageEvidence[]> {
+  try {
+    if (source.isAvailable && !(await source.isAvailable())) return [];
+    return await source.detect(input, ctx);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Build a configured detector. Does the per-roster setup once and returns a
  * `detect` function whose sync/async shape is fixed by the registered engines
@@ -66,11 +109,16 @@ function applicable(source: EvidenceSource, input: DetectInput): boolean {
 export function compile<const E extends readonly EvidenceSource[] = []>(
   config: DetectorConfig<E> = {},
 ): DetectFn<E> {
-  const sources: EvidenceSource[] = [
-    ...builtIns(config.candidates, config.nodeLangAttributes ?? DEFAULT_NODE_LANG_ATTRIBUTES),
-    ...(config.engines ?? []),
-  ];
+  const producers = builtIns(
+    config.candidates,
+    config.nodeLangAttributes ?? DEFAULT_NODE_LANG_ATTRIBUTES,
+  );
+  const sources: EvidenceSource[] = [...producers, ...(config.engines ?? [])];
+  /** Everything from here on is an opt-in engine — code the library does not
+   *  own, so its faults are contained. See {@link runSync}. */
+  const firstEngine = producers.length;
   const hasAsync = sources.some((source) => !source.sync);
+  const earlyExit = config.earlyExit;
   const fuseOptions: FuseOptions = {
     weights: config.weights,
     candidates: config.candidates,
@@ -80,8 +128,12 @@ export function compile<const E extends readonly EvidenceSource[] = []>(
   if (!hasAsync) {
     const detect = (input: DetectInput): Classification => {
       const evidence: LanguageEvidence[] = [];
-      for (const source of sources) {
-        if (source.sync && applicable(source, input)) evidence.push(...source.detect(input));
+      for (const [i, source] of sources.entries()) {
+        if (!source.sync || !applicable(source, input)) continue;
+        evidence.push(...runSync(source, input, i >= firstEngine));
+        if (!earlyExit) continue;
+        const soFar = fuse(evidence, fuseOptions);
+        if (soFar.confidence >= earlyExit.minConfidence) return soFar;
       }
       return fuse(evidence, fuseOptions);
     };
@@ -89,14 +141,32 @@ export function compile<const E extends readonly EvidenceSource[] = []>(
   }
 
   const detect = async (input: DetectInput, ctx: DetectContext = {}): Promise<Classification> => {
+    // Abort is checked before every dispatch and after every await: an aborted
+    // detection rejects with the signal's reason (web-standard
+    // `AbortSignal.throwIfAborted()` semantics) rather than resolving with a
+    // verdict that silently skipped sources.
+    const signal = ctx.signal;
     const evidence: LanguageEvidence[] = [];
+    // Default mode: every async source is started here and they are awaited
+    // together, so registering N engines costs one round of latency, not N.
+    // `earlyExit` opts out of that — it awaits each source in turn (`sources` is
+    // in registration order, cheaper-first) so it can stop before reaching the
+    // expensive ones; you cannot decline to start a source you already started.
+    // `pending` stays empty in that mode.
     const pending: Promise<LanguageEvidence[]>[] = [];
-    for (const source of sources) {
+    for (const [i, source] of sources.entries()) {
+      signal?.throwIfAborted();
       if (!applicable(source, input)) continue;
-      if (source.sync) evidence.push(...source.detect(input));
-      else pending.push(Promise.resolve(source.detect(input, ctx)).catch(() => []));
+      if (source.sync) evidence.push(...runSync(source, input, i >= firstEngine));
+      else if (earlyExit) evidence.push(...(await runAsync(source, input, ctx)));
+      else pending.push(runAsync(source, input, ctx));
+      if (!earlyExit) continue;
+      signal?.throwIfAborted();
+      const soFar = fuse(evidence, fuseOptions);
+      if (soFar.confidence >= earlyExit.minConfidence) return soFar;
     }
     for (const batch of await Promise.all(pending)) evidence.push(...batch);
+    signal?.throwIfAborted();
     return fuse(evidence, fuseOptions);
   };
   return detect as DetectFn<E>;

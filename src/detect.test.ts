@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { compile } from "./compile.js";
-import { chromeAiEngine } from "./chrome-ai.js";
+import { chromeAiEngine, createChromeAiEngine } from "./chrome-ai.js";
 import { createFrancEngine } from "./franc.js";
 import { en, ru, uk } from "./profiles.js";
-import type { LanguageProfile } from "./types.js";
+import type { AsyncSource, LanguageEvidence, LanguageProfile, SyncSource } from "./types.js";
 
 describe("compile (sync path)", () => {
   it("classifies from header evidence synchronously", () => {
@@ -171,5 +171,346 @@ describe("compile (async path)", () => {
     expect(pending).toBeInstanceOf(Promise);
     const result = await pending;
     expect(result.language).toBe("en");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dispatch-loop contracts: availability gating, cancellation, early exit and
+// engine fault isolation. All four live in the same loop in `compile()`.
+// ---------------------------------------------------------------------------
+
+type AvailabilityState = "available" | "downloadable" | "downloading" | "unavailable";
+
+/** Install a fake `globalThis.LanguageDetector` and count the two calls that
+ *  matter: `availability()` (the cheap probe) and `create()` — the one that
+ *  starts a multi-hundred-MB model download on real Chrome. */
+function installLanguageDetector(availability: AvailabilityState): {
+  availability: number;
+  create: number;
+} {
+  const calls = { availability: 0, create: 0 };
+  (globalThis as unknown as { LanguageDetector: unknown }).LanguageDetector = {
+    availability: () => {
+      calls.availability += 1;
+      return Promise.resolve(availability);
+    },
+    create: () => {
+      calls.create += 1;
+      return Promise.resolve({
+        detect: () => Promise.resolve([{ detectedLanguage: "ru", confidence: 0.97 }]),
+      });
+    },
+  };
+  return calls;
+}
+
+afterEach(() => {
+  delete (globalThis as unknown as { LanguageDetector?: unknown }).LanguageDetector;
+});
+
+/** An async engine that contributes nothing — a stand-in for "some engine is
+ *  registered", which is what flips `compile` onto the async path. */
+const idleEngine: AsyncSource = {
+  id: "idle",
+  sync: false,
+  inputs: ["text"],
+  detect: () => Promise.resolve([]),
+};
+
+describe("compile — async availability gate (issue #23)", () => {
+  it("never creates a session for a 'downloadable' model, and emits no chrome-ai evidence", async () => {
+    const calls = installLanguageDetector("downloadable");
+    const detect = compile({ candidates: [uk, ru, en], engines: [createChromeAiEngine()] });
+    const result = await detect({ text: "работа" });
+    expect(calls.create).toBe(0);
+    expect(calls.availability).toBe(1);
+    expect(result.evidence.some((e) => e.kind === "chrome-ai")).toBe(false);
+    expect(result.language).toBe("ru");
+  });
+
+  it("runs the engine and fuses its evidence when the model is 'available'", async () => {
+    const calls = installLanguageDetector("available");
+    const detect = compile({ candidates: [uk, ru, en], engines: [createChromeAiEngine()] });
+    const result = await detect({ text: "работа" });
+    expect(calls.availability).toBe(1);
+    expect(calls.create).toBe(1);
+    expect(result.evidence.some((e) => e.kind === "chrome-ai")).toBe(true);
+    expect(result.language).toBe("ru");
+  });
+
+  it("honors isAvailable() for any async source, not just chrome-ai", async () => {
+    let detectCalls = 0;
+    const gated: AsyncSource = {
+      id: "gated",
+      sync: false,
+      inputs: ["text"],
+      isAvailable: () => false,
+      detect: () => {
+        detectCalls += 1;
+        return Promise.resolve([]);
+      },
+    };
+    const detect = compile({ candidates: [uk, ru, en], engines: [gated] });
+    expect((await detect({ text: "работа" })).language).toBe("ru");
+    expect(detectCalls).toBe(0);
+  });
+
+  it("runs an async source whose isAvailable() resolves true", async () => {
+    let detectCalls = 0;
+    const gated: AsyncSource = {
+      id: "gated",
+      sync: false,
+      inputs: ["text"],
+      isAvailable: () => Promise.resolve(true),
+      detect: () => {
+        detectCalls += 1;
+        return Promise.resolve([]);
+      },
+    };
+    const detect = compile({ candidates: [uk, ru, en], engines: [gated] });
+    await detect({ text: "работа" });
+    expect(detectCalls).toBe(1);
+  });
+
+  it("contains a throwing isAvailable() instead of failing the detection", async () => {
+    const broken: AsyncSource = {
+      id: "broken-gate",
+      sync: false,
+      inputs: ["text"],
+      isAvailable: (): boolean => {
+        throw new Error("gate exploded");
+      },
+      detect: () => Promise.resolve([]),
+    };
+    const detect = compile({ candidates: [uk, ru, en], engines: [broken] });
+    expect((await detect({ text: "работа" })).language).toBe("ru");
+  });
+});
+
+describe("compile — DetectContext.signal (issue #29)", () => {
+  it("rejects with the abort reason when the signal is already aborted", async () => {
+    const detect = compile({ candidates: [uk, ru, en], engines: [idleEngine] });
+    const controller = new AbortController();
+    controller.abort(new Error("already gone"));
+    await expect(detect({ text: "работа" }, { signal: controller.signal })).rejects.toThrow(
+      "already gone",
+    );
+  });
+
+  it("rejects when the signal aborts mid-flight, after a source has resolved", async () => {
+    const controller = new AbortController();
+    let ran = false;
+    const aborter: AsyncSource = {
+      id: "aborter",
+      sync: false,
+      inputs: ["text"],
+      detect: async () => {
+        await Promise.resolve();
+        ran = true;
+        controller.abort(new Error("cancelled mid-flight"));
+        return [];
+      },
+    };
+    const detect = compile({ candidates: [uk, ru, en], engines: [aborter] });
+    await expect(detect({ text: "работа" }, { signal: controller.signal })).rejects.toThrow(
+      "cancelled mid-flight",
+    );
+    expect(ran).toBe(true);
+  });
+
+  it("rejects on abort under earlyExit too", async () => {
+    const controller = new AbortController();
+    const aborter: AsyncSource = {
+      id: "aborter",
+      sync: false,
+      inputs: ["text"],
+      detect: async () => {
+        await Promise.resolve();
+        controller.abort(new Error("cancelled sequentially"));
+        return [];
+      },
+    };
+    const detect = compile({ engines: [aborter], earlyExit: { minConfidence: 0.99 } });
+    await expect(detect({ text: "работа" }, { signal: controller.signal })).rejects.toThrow(
+      "cancelled sequentially",
+    );
+  });
+
+  it("resolves normally when the signal is never aborted", async () => {
+    const detect = compile({ candidates: [uk, ru, en], engines: [idleEngine] });
+    const controller = new AbortController();
+    const result = await detect({ text: "работа" }, { signal: controller.signal });
+    expect(result.language).toBe("ru");
+  });
+});
+
+describe("compile — earlyExit (issue #29)", () => {
+  /** Records `id:start` / `id:end` so the tests can tell concurrent dispatch
+   *  (all starts before any end) from sequential dispatch. */
+  function traced(id: string, order: string[]): AsyncSource {
+    return {
+      id,
+      sync: false,
+      inputs: ["text"],
+      detect: async () => {
+        order.push(`${id}:start`);
+        await Promise.resolve();
+        order.push(`${id}:end`);
+        return [];
+      },
+    };
+  }
+
+  it("skips a later async engine once the threshold is met", async () => {
+    // The built-in text producer alone fuses this to ~0.84.
+    let calls = 0;
+    const late: AsyncSource = {
+      id: "late",
+      sync: false,
+      inputs: ["text"],
+      detect: () => {
+        calls += 1;
+        return Promise.resolve([]);
+      },
+    };
+    const detect = compile({
+      candidates: [uk, ru, en],
+      engines: [late],
+      earlyExit: { minConfidence: 0.7 },
+    });
+    expect((await detect({ text: "Слава Україні" })).language).toBe("uk");
+    expect(calls).toBe(0);
+  });
+
+  it("still runs the later engine when the threshold is never met", async () => {
+    let calls = 0;
+    const late: AsyncSource = {
+      id: "late",
+      sync: false,
+      inputs: ["text"],
+      detect: () => {
+        calls += 1;
+        return Promise.resolve([]);
+      },
+    };
+    const detect = compile({
+      candidates: [uk, ru, en],
+      engines: [late],
+      earlyExit: { minConfidence: 0.99 },
+    });
+    await detect({ text: "Слава Україні" });
+    expect(calls).toBe(1);
+  });
+
+  it("skips a later sync engine once the threshold is met, staying synchronous", () => {
+    let calls = 0;
+    const late: SyncSource = {
+      id: "late-sync",
+      sync: true,
+      inputs: ["text"],
+      detect: () => {
+        calls += 1;
+        return [];
+      },
+    };
+    const detect = compile({
+      candidates: [uk, ru, en],
+      engines: [late],
+      earlyExit: { minConfidence: 0.7 },
+    });
+    const result = detect({ text: "Слава Україні" });
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(result.language).toBe("uk");
+    expect(calls).toBe(0);
+  });
+
+  it("without earlyExit, async engines still run concurrently", async () => {
+    const order: string[] = [];
+    const detect = compile({ engines: [traced("a", order), traced("b", order)] });
+    await detect({ text: "работа" });
+    expect(order).toEqual(["a:start", "b:start", "a:end", "b:end"]);
+  });
+
+  it("with earlyExit, async engines run one at a time", async () => {
+    const order: string[] = [];
+    const detect = compile({
+      engines: [traced("a", order), traced("b", order)],
+      earlyExit: { minConfidence: 0.99 },
+    });
+    await detect({ text: "работа" });
+    expect(order).toEqual(["a:start", "a:end", "b:start", "b:end"]);
+  });
+});
+
+describe("compile — engine fault isolation (issue #30)", () => {
+  /** A plain (non-`async`) function returning a promise satisfies
+   *  `AsyncSource.detect` — and it is the shape whose throw escapes a
+   *  `Promise.resolve(source.detect(...)).catch(...)` guard. */
+  const syncThrow: AsyncSource = {
+    id: "sync-throw",
+    sync: false,
+    inputs: ["text"],
+    detect: (): Promise<LanguageEvidence[]> => {
+      throw new Error("boom");
+    },
+  };
+
+  const asyncThrow: AsyncSource = {
+    id: "async-throw",
+    sync: false,
+    inputs: ["text"],
+    detect: async (): Promise<LanguageEvidence[]> => {
+      await Promise.resolve();
+      throw new Error("boom2");
+    },
+  };
+
+  const throwingSyncEngine: SyncSource = {
+    id: "sync-engine-throw",
+    sync: true,
+    inputs: ["text"],
+    detect: (): LanguageEvidence[] => {
+      throw new Error("boom3");
+    },
+  };
+
+  it("an async engine that throws synchronously costs only its own evidence", async () => {
+    const detect = compile({ candidates: [uk, ru, en], engines: [syncThrow] });
+    const result = await detect({ text: "Слава Україні" });
+    expect(result.language).toBe("uk");
+  });
+
+  it("an async engine that rejects costs only its own evidence", async () => {
+    const detect = compile({ candidates: [uk, ru, en], engines: [asyncThrow] });
+    expect((await detect({ text: "Слава Україні" })).language).toBe("uk");
+  });
+
+  it("both throwing shapes together still yield the verdict", async () => {
+    const detect = compile({ candidates: [uk, ru, en], engines: [syncThrow, asyncThrow] });
+    expect((await detect({ text: "Слава Україні" })).language).toBe("uk");
+  });
+
+  it("a throwing engine is contained under earlyExit too", async () => {
+    const detect = compile({
+      candidates: [uk, ru, en],
+      engines: [syncThrow],
+      earlyExit: { minConfidence: 0.99 },
+    });
+    expect((await detect({ text: "Слава Україні" })).language).toBe("uk");
+  });
+
+  it("a registered sync engine that throws is contained, and the path stays sync", () => {
+    const detect = compile({ candidates: [uk, ru, en], engines: [throwingSyncEngine] });
+    const result = detect({ text: "Слава Україні" });
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(result.language).toBe("uk");
+  });
+
+  it("a registered sync engine that throws is contained on the async path too", async () => {
+    const detect = compile({
+      candidates: [uk, ru, en],
+      engines: [throwingSyncEngine, idleEngine],
+    });
+    expect((await detect({ text: "Слава Україні" })).language).toBe("uk");
   });
 });

@@ -70,7 +70,7 @@ describe("chromeAiEngine.isAvailable", () => {
   });
 });
 
-describe("chromeAiEngine.detect", () => {
+describe("chromeAiEngine.detect (model available)", () => {
   it("emits chrome-ai evidence for a confident detection", async () => {
     installStub({
       availability: "available",
@@ -98,5 +98,72 @@ describe("chromeAiEngine.detect", () => {
     await engine.detect({ text: "one" }, {});
     await engine.detect({ text: "two" }, {});
     expect(createSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("chromeAiEngine.detect — self-gating on availability (issue #23)", () => {
+  it("never calls create() for a 'downloadable' model, even when driven directly", async () => {
+    const { availabilitySpy, createSpy } = installStub({ availability: "downloadable" });
+    expect(await engine.detect({ text: "Привіт, як справи" }, {})).toEqual([]);
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(availabilitySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("abstains for 'downloading' and 'unavailable' without creating a session", async () => {
+    const downloading = installStub({ availability: "downloading" });
+    expect(await engine.detect({ text: "Привіт" }, {})).toEqual([]);
+    expect(downloading.createSpy).not.toHaveBeenCalled();
+
+    engine = createChromeAiEngine();
+    const unavailable = installStub({ availability: "unavailable" });
+    expect(await engine.detect({ text: "Привіт" }, {})).toEqual([]);
+    expect(unavailable.createSpy).not.toHaveBeenCalled();
+  });
+
+  it("abstains when the LanguageDetector API is missing entirely", async () => {
+    uninstallStub();
+    expect(await engine.detect({ text: "Привіт" }, {})).toEqual([]);
+  });
+
+  it("probes availability at most once across detect() calls", async () => {
+    const { availabilitySpy } = installStub({ availability: "available" });
+    await engine.detect({ text: "one" }, {});
+    await engine.detect({ text: "two" }, {});
+    expect(availabilitySpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("chromeAiEngine.detect — abort signal (issue #29)", () => {
+  it("throws the abort reason when the signal is already aborted", async () => {
+    installStub({ availability: "available" });
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled up front"));
+    await expect(engine.detect({ text: "Привіт" }, { signal: controller.signal })).rejects.toThrow(
+      "cancelled up front",
+    );
+  });
+
+  it("throws when the signal aborts while the model call is in flight", async () => {
+    const controller = new AbortController();
+    installStub({
+      availability: "available",
+      detect: () => {
+        controller.abort(new Error("cancelled in flight"));
+        return [{ detectedLanguage: "uk", confidence: 0.92 }];
+      },
+    });
+    await expect(engine.detect({ text: "Привіт" }, { signal: controller.signal })).rejects.toThrow(
+      "cancelled in flight",
+    );
+  });
+
+  it("is unaffected by a signal that never aborts", async () => {
+    installStub({
+      availability: "available",
+      detect: () => [{ detectedLanguage: "uk", confidence: 0.92 }],
+    });
+    const controller = new AbortController();
+    const ev = await engine.detect({ text: "Привіт" }, { signal: controller.signal });
+    expect(ev[0]).toMatchObject({ kind: "chrome-ai", language: "uk" });
   });
 });

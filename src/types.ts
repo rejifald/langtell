@@ -90,6 +90,12 @@ export interface DetectInput {
 }
 
 export interface DetectContext {
+  /** Cancels an in-flight async detection. Checked before each source is
+   *  dispatched and again after every await, including inside the engines that
+   *  receive this context. On abort the returned promise *rejects* with the
+   *  signal's `reason` — web-standard `AbortSignal.throwIfAborted()` semantics.
+   *  It never resolves with a partial {@link Classification}: a verdict that
+   *  silently skipped sources is indistinguishable from a real one. */
   signal?: AbortSignal;
   maxChars?: number;
 }
@@ -109,7 +115,15 @@ export interface AsyncSource {
   readonly id: string;
   readonly sync: false;
   readonly inputs: readonly SourceInput[];
+  /** Optional readiness gate. A compiled detector calls this before `detect`
+   *  and skips the engine entirely when it resolves `false` — so an engine can
+   *  decline work it must not start (e.g. an on-device model that would have to
+   *  be downloaded first). Faults are contained: a throw here skips the engine.
+   *  Engines should still self-gate inside `detect`, since they may be invoked
+   *  directly. */
   isAvailable?(): boolean | Promise<boolean>;
+  /** Faults are contained by the compiled detector — a throw (synchronous or
+   *  via rejection) costs this engine's evidence only, never the detection. */
   detect(input: DetectInput, ctx: DetectContext): Promise<LanguageEvidence[]>;
 }
 
@@ -135,8 +149,14 @@ export type Weights = Partial<Record<string, number>>;
  *    Latin title plus an explicit `en` `Content-Language` stays `en`. */
 export type NonDiscriminatingScript = "candidate" | "unknown";
 
+/** Opt-in cost control. Setting it makes the detector run its sources one at a
+ *  time, in registration order (built-in producers first, then `engines` — the
+ *  cheaper-first order), fusing after each and returning as soon as the verdict
+ *  is good enough. That trade is the point: the async path otherwise runs every
+ *  engine concurrently, which is faster in wall-clock but never skips one. */
 export interface EarlyExit {
-  /** Stop running further (cheaper-first) sources once confidence clears this. */
+  /** Stop running further (cheaper-first) sources once confidence clears this
+   *  (`>=`). */
   minConfidence: number;
 }
 
