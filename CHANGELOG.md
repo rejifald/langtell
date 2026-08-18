@@ -1,5 +1,74 @@
 # langtell
 
+## 0.6.1
+
+### Patch Changes
+
+- 374ddd0: fix(fuse): never name a language at `confidence: 0`
+
+  `Classification.confidence` is documented `0..1`, but two caller-weight cases
+  produced a _named_ language at exactly `0` — a verdict no threshold check
+  (`confidence > x`) can catch:
+
+  - A non-finite weight (`weights: { "html-lang": Infinity }`) made the winning
+    score infinite, so the confidence ratio was `Infinity/Infinity` → `NaN` → `0`.
+  - A weight of `0` on a script kind left that read pinning the verdict while
+    scoring nothing, so the pinned fallback returned it at `0/0.15` → `0`.
+
+  A weight is now defined as a finite, non-negative multiplier. Values outside
+  that range (`Infinity`, `-Infinity`, `NaN`, negatives) are not a stronger way to
+  say "this signal always wins" — `Infinity` has no coherent meaning in a weighted
+  sum, and against a `0`-confidence item it yields `NaN` — so such a key is
+  **ignored** and resolves to the default weight as if it had not been set.
+
+  `0` remains meaningful and now silences a signal completely: it scores nothing,
+  and a silenced script read no longer pins the verdict against the rest of the
+  evidence either. Every other weight behaves exactly as before.
+
+- e730de0: Withdraw a verdict the text itself contradicts, in both detectors.
+
+  The rung ladder counts what each candidate uniquely **owns**, which can only
+  argue _for_ a candidate — leaving a closed set defenceless against text written
+  in a language it does not carry. Belarusian handed to `{uk, ru}` spent its `і`s
+  electing Ukrainian while `ы`, `ў` and `э` — letters Ukrainian does not have at
+  all — counted for nobody and stopped nothing.
+
+  Both `classifyBySnippet` and the roster-free `detectCyrillicLanguage` fast-path
+  now check the winner against the text one last time: a candidate whose own
+  alphabet cannot account for 2 % of the letters (`CONTRADICTION_SHARE`) loses to
+  `"unknown"`. The runner-up is not promoted — a set that cannot account for the
+  text does not get a second guess at it. Widening the roster (adding `be`) makes
+  the same snippets resolve.
+
+  The threshold is measured, not picked: an in-language snippet quoting a sibling
+  runs 0.3–0.9 %, a borrowed proper noun 1.4–1.5 %, and genuinely other-language
+  text 2.3–17 %.
+
+  Quotations are not held against the author who quoted them. They are scrubbed
+  before the measurement alongside URLs and @handles — a Ukrainian article quoting
+  a Russian sentence is still Ukrainian — unless the quotation IS the text (half
+  the letters or more: a pull-quote, a headline in guillemets), in which case it is
+  the content and is measured like any other. Paired double marks only (`«» "" “”
+„“`), never the single forms that uk/be spell words with. The rung tallies still
+  read the text whole; only the veto's measurement excludes quotations.
+
+  New on `langtell/classify`: `textAlphabet(text)` derives the letters a text
+  actually uses, once, and `contradictionOf(alphabet, profile)` asks one candidate
+  to account for them — returning the letters it cannot and their weight. A report
+  over a roster is then one pass plus a set lookup per candidate, on the same
+  derivation the verdict used. `contradiction(text, profile)` is the one-text
+  convenience; `CONTRADICTION_SHARE` is the threshold itself.
+
+  The core bundle budget moves 3.25 kB → 3.35 kB: the veto and the derivation are
+  reachable from `compile`, and 29 B of brotli is what they cost there.
+
+  Also drops 23 Russian words (`это`, `ты`, `который`, …) that OpenSubtitles'
+  Ukrainian content set had bled into `uk.words.frequent`. Each is spelled with a
+  letter Ukrainian does not have, so it was never evidence for Ukrainian — but by
+  sitting in both lists it cancelled the same word in Russian's, disarming a
+  marker `ru` genuinely owns. `profiles.test.ts` now pins the invariant for every
+  shipped list.
+
 ## 0.6.0
 
 ### Minor Changes
