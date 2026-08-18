@@ -24,6 +24,12 @@
  * straight to `classifyBySnippet` with no adapter — the generic defaults to
  * {@link LanguageProfile}, so the bare form is unchanged.
  *
+ * The ladder answers a forced choice, so it carries one veto: a winner whose own
+ * alphabet cannot account for {@link CONTRADICTION_SHARE} of the text loses to
+ * `"unknown"` rather than speaking for a language that is not on the roster.
+ * {@link contradictionShare} is the same measurement, exported for callers that
+ * have to explain a verdict instead of only acting on it.
+ *
  * For callers building a rung-3 resolver that ALSO runs its backstop off-path
  * (e.g. an oracle over raw, unscoped candidates), two helpers from the same
  * machinery are exposed so that scoping stays consistent with the classifier
@@ -34,6 +40,8 @@
  */
 export {
   classifyBySnippet,
+  CONTRADICTION_SHARE,
+  contradictionShare,
   FRANC_RUNG,
   RUNG3_MIN_LENGTH,
   scopeCandidates,

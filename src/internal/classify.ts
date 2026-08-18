@@ -18,6 +18,14 @@
  * *letter* `и` is shared. Nothing is precomputed — uniqueness is the runtime
  * output, never stored.
  *
+ * Above the ladder sits one veto. Ownership is additive evidence and can only
+ * ever argue FOR a candidate, which leaves a closed set defenceless against text
+ * written in a language it does not contain: Belarusian handed to {uk, ru} spends
+ * its `і`s electing Ukrainian while its `ы`/`ў`/`э` — letters Ukrainian does not
+ * have at all — count for nobody and stop nothing. So a winner is checked against
+ * the text one last time, and a winner whose own alphabet cannot account for
+ * {@link CONTRADICTION_SHARE} of it loses to `"unknown"`.
+ *
  * Adapted to langtell's {@link LanguageProfile} shape: the `words` and `iso6393`
  * fields are optional here, so a bare `{ code, alphabet }` profile still
  * classifies on rung 1.
@@ -183,6 +191,72 @@ export function distinctiveChars(profiles: readonly LanguageProfile[]): Map<stri
   return result;
 }
 
+/**
+ * Share of a text's letters, in a profile's own script, that the profile's
+ * alphabet does not contain — evidence AGAINST that profile.
+ *
+ * Beyond which a candidate is treated as contradicted by the text. Measured, not
+ * picked: across a mixed corpus (Cyrillic siblings + Latin), the three
+ * populations separate cleanly.
+ *
+ *   0.3–0.9 %  an in-language snippet quoting a sibling (a Ukrainian article
+ *              carrying a Russian sentence, and vice versa)
+ *   1.4–1.5 %  a foreign proper noun in otherwise monolingual prose
+ *              (`Нұрсұлтан` in a Russian article, `Ђоковић` in another)
+ *   2.3–17 %   text that is simply written in a language nobody on the roster
+ *              profiles (Belarusian against {uk, ru}, German against {en})
+ *
+ * 2 % sits in the gap. It is deliberately nearer the incidental end: the cost of
+ * vetoing too eagerly is an `"unknown"` a caller escalates, while the cost of
+ * vetoing too late is a confident wrong language.
+ */
+export const CONTRADICTION_SHARE = 0.02;
+
+/** {@link contradictionShare} over text a caller has already noise-stripped. */
+function shareOfCleaned(cleaned: string, profile: LanguageProfile): number {
+  const script = scriptOfProfile(profile);
+  if (script === null) return 0;
+  const inScript = script === "cyrillic" ? CYRILLIC_RE : LATIN_RE;
+  // `marks` joins the alphabet for the same reason it does at rung 1: an
+  // apostrophe is part of how uk/be spell, not a foreign letter. (It is not a
+  // letter, so the script filter drops it first — kept for the profiles whose
+  // marks ever grow to include one.)
+  const own = new Set(profile.alphabet + (profile.marks ?? ""));
+  let letters = 0;
+  let foreign = 0;
+  for (const ch of cleaned.toLowerCase()) {
+    if (!inScript.test(ch)) continue;
+    letters += 1;
+    if (!own.has(ch)) foreign += 1;
+  }
+  return letters === 0 ? 0 : foreign / letters;
+}
+
+/**
+ * How much of `text` a candidate's own alphabet cannot account for — 0..1.
+ *
+ * Counted over the letters of that candidate's script only, so a Cyrillic
+ * headline followed by a Latin brand name does not read as evidence against
+ * either. Noise (URLs, @handles, #hashtags) is stripped exactly as
+ * {@link classifyBySnippet} strips it.
+ *
+ * WHY THIS EXISTS AT ALL. The rung ladder is additive: it counts what each
+ * candidate uniquely OWNS and never counts what a candidate cannot possibly
+ * have written. Those are different questions, and the second one is the only
+ * defence a closed set has against a language that is not in it. Belarusian
+ * `Мова і культура Беларусі маюць багатую гісторыю` hands `і` to Ukrainian four
+ * times over against {uk, ru} — while `ы`, a letter Ukrainian does not have,
+ * sits in the same sentence saying the winner cannot be right. Ownership alone
+ * cannot see that; this is what sees it.
+ *
+ * Exported so a caller that has to EXPLAIN a verdict (a diagnostics screen, an
+ * audit trail) can show the same number the veto acted on, rather than deriving
+ * a second, drifting copy of it.
+ */
+export function contradictionShare(text: string, profile: LanguageProfile): number {
+  return shareOfCleaned(stripNoise(text), profile);
+}
+
 interface Membership {
   code: string;
   set: ReadonlySet<string>;
@@ -274,8 +348,9 @@ function wordRung(
 
 /**
  * Classify `text` among `candidates`. Synchronous and allocation-light. Returns
- * `"unknown"` on empty evidence, on a tie inside the candidate set, or when
- * nothing is distinctive.
+ * `"unknown"` on empty evidence, on a tie inside the candidate set, when nothing
+ * is distinctive, or when the winning candidate is contradicted by the text
+ * itself (see {@link contradictionShare}).
  *
  * Generic over the concrete profile type `P`, inferred from `candidates`. The
  * optional `rung3` resolver is typed over the same `P`, so a consumer with a
@@ -304,8 +379,25 @@ export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
   // whichever rung decides — a single rung can't see the scope size.
   const discriminating = scoped.length >= 2;
 
+  /**
+   * A winner the text itself argues against is no winner — see
+   * {@link contradictionShare}.
+   *
+   * Applied to whichever rung decided, franc's included: every rung answers the
+   * same forced-choice question, so every rung can be forced into the same wrong
+   * answer by a language the roster does not carry. The runner-up is NOT
+   * promoted — a set that could not account for the text does not get a second
+   * guess at it. `"unknown"` is the honest answer, and the signal a caller needs
+   * to widen the roster or escalate.
+   */
+  const settle = (verdict: RungVerdict): SnippetVerdict => {
+    const winner = scoped.find((c) => c.code === verdict.language);
+    if (winner && shareOfCleaned(cleaned, winner) >= CONTRADICTION_SHARE) return UNKNOWN;
+    return { ...verdict, discriminating };
+  };
+
   const byLetter = letterRung(cleaned, scoped);
-  if (byLetter) return { ...byLetter, discriminating };
+  if (byLetter) return settle(byLetter);
 
   const tokens = tokenize(cleaned);
   if (tokens.length === 0) return UNKNOWN;
@@ -314,5 +406,5 @@ export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
     wordRung(tokens, scoped, "function", "2a") ??
     wordRung(tokens, scoped, "frequent", "2b") ??
     rung3?.(cleaned, scoped);
-  return byWord ? { ...byWord, discriminating } : UNKNOWN;
+  return byWord ? settle(byWord) : UNKNOWN;
 }

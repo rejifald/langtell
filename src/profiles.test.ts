@@ -102,3 +102,24 @@ describe("PROFILED_CODES / hasProfile", () => {
     expect(getProfiles(PROFILED_CODES).map((p) => p.code)).toEqual([...PROFILED_CODES]);
   });
 });
+
+describe("every profile can spell its own word lists", () => {
+  // A word its own language cannot write is never evidence FOR that language,
+  // and it is worse than dead weight: `tally` cancels a word two candidates
+  // both list, so a Russian word sitting in the Ukrainian list quietly disarms
+  // the same word in Russian's. The uk generated list arrived from
+  // OpenSubtitles with 23 of them (`это`, `который`, …) — Russian subtitle
+  // lines inside the Ukrainian content set. This is the guard for the next
+  // corpus refresh.
+  for (const [code, profile] of Object.entries(PROFILES)) {
+    const own = new Set(profile.alphabet + (profile.marks ?? ""));
+    for (const tier of ["function", "frequent"] as const) {
+      it(`${code}.words.${tier}`, () => {
+        const offenders = (profile.words?.[tier] ?? []).filter((word) =>
+          [...word].some((ch) => !own.has(ch)),
+        );
+        expect(offenders).toEqual([]);
+      });
+    }
+  }
+});
