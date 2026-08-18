@@ -198,6 +198,23 @@ describe("detectCyrillicLanguage — a call the letters argue with is withdrawn"
     expect(detectCyrillicLanguage(text).language).toBe("ru");
   });
 
+  it("a quotation is not held against the author who quoted it", () => {
+    // Short enough that the Russian quotation is 39% of the letters — over the
+    // line if it counted, which is exactly the case a bare threshold gets wrong.
+    const text =
+      "Бабуся любила повторювати цю фразу щоразу, коли ми збиралися разом за столом " +
+      "у неділю, і кожен онук її пам ятає до сьогодні, бо вона казала це з усмішкою. " +
+      "«Когда я была маленькой, мы жили совсем по-другому, в полном достатке, и всё было проще»";
+    expect(detectCyrillicLanguage(text).language).toBe("uk");
+  });
+
+  it("but a text that IS the quotation is judged as itself", () => {
+    // Strip a pull-quote and nothing is left to judge, so the guard keeps it.
+    expect(
+      detectCyrillicLanguage("«Гэта цікавая кніга і добры фільм пра нашу краіну»").language,
+    ).toBe("unknown");
+  });
+
   it("an article quoting its neighbour keeps its own language", () => {
     const text =
       "Сьогодні в Києві відкрилася нова виставка українського мистецтва. Російський " +

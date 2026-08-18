@@ -31,6 +31,10 @@
  * classifies on rung 1.
  */
 import type { LanguageProfile } from "../types.js";
+import { stripNoise, stripQuoted } from "./scrub.js";
+
+// Re-exported so the classifier stays the one door onto its own preprocessing.
+export { stripNoise, stripQuoted } from "./scrub.js";
 
 export const FRANC_RUNG = 3;
 
@@ -91,34 +95,6 @@ export type ScriptName = "cyrillic" | "latin";
 
 /** Below this length, trigrams are too noisy to justify a rung-3 verdict. */
 export const RUNG3_MIN_LENGTH = 24;
-
-/**
- * Trailing/inline Latin "noise" tokens — URLs, @handles, #hashtags — that a
- * Cyrillic title commonly carries (a headline followed by a link or a social
- * handle). These are almost always Latin even on Cyrillic-language content, so
- * left in they can flip {@link dominantScript} to Latin and let genuinely
- * Cyrillic content scope to the wrong roster. Stripped before the script vote
- * AND before the rung tallies so the URL's letters never contribute either.
- *
- * Kept as separate simple patterns (applied in order — schemes/www before bare
- * domains) rather than one big alternation, so each stays readable. ASCII-only
- * `[a-z0-9-]` in the domain pattern means a Cyrillic word is never mistaken for
- * a domain.
- */
-const NOISE_PATTERNS: readonly RegExp[] = [
-  /\bhttps?:\/\/\S+/gi, // full URLs
-  /\bwww\.\S+/gi, // www.… without a scheme
-  /\b[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?/gi, // bare domains (example.com/path)
-  /[@#][\p{L}\p{N}_]+/gu, // @handles and #hashtags
-];
-
-/** Drop URLs / @handles / #hashtags so trailing Latin noise can't outvote the
- *  prose's script or pollute the per-rung tallies. */
-export function stripNoise(text: string): string {
-  let out = text;
-  for (const re of NOISE_PATTERNS) out = out.replace(re, " ");
-  return out;
-}
 
 /** The script most of `text` is written in, or `null` if it carries no letters.
  *  Noise (URLs/handles/hashtags) is stripped first so a single trailing link
@@ -212,33 +188,85 @@ export function distinctiveChars(profiles: readonly LanguageProfile[]): Map<stri
  */
 export const CONTRADICTION_SHARE = 0.02;
 
-/** {@link contradictionShare} over text a caller has already noise-stripped. */
-function shareOfCleaned(cleaned: string, profile: LanguageProfile): number {
-  const script = scriptOfProfile(profile);
-  if (script === null) return 0;
-  const inScript = script === "cyrillic" ? CYRILLIC_RE : LATIN_RE;
-  // `marks` joins the alphabet for the same reason it does at rung 1: an
-  // apostrophe is part of how uk/be spell, not a foreign letter. (It is not a
-  // letter, so the script filter drops it first — kept for the profiles whose
-  // marks ever grow to include one.)
-  const own = new Set(profile.alphabet + (profile.marks ?? ""));
-  let letters = 0;
-  let foreign = 0;
-  for (const ch of cleaned.toLowerCase()) {
-    if (!inScript.test(ch)) continue;
-    letters += 1;
-    if (!own.has(ch)) foreign += 1;
+/**
+ * A text's own alphabet: each letter it uses, and how often — its script's
+ * letters only in the sense that non-letters are simply absent.
+ *
+ * Insertion-ordered, so a caller rendering it shows letters in the order the
+ * reader met them rather than in an order a hash table chose.
+ */
+export type TextAlphabet = ReadonlyMap<string, number>;
+
+/** What one candidate's alphabet cannot account for in a text. */
+export interface Contradiction {
+  /** The letters, distinct and in first-seen order. Empty when there are none. */
+  readonly letters: readonly string[];
+  /** Their weight, 0..1, against the letters of that candidate's script. */
+  readonly share: number;
+}
+
+const NO_CONTRADICTION: Contradiction = { letters: [], share: 0 };
+
+/** {@link textAlphabet} over text a caller has already scrubbed. */
+function alphabetOfScrubbed(scrubbed: string): TextAlphabet {
+  const counts = new Map<string, number>();
+  for (const ch of scrubbed.toLowerCase()) {
+    if (!CYRILLIC_RE.test(ch) && !LATIN_RE.test(ch)) continue;
+    counts.set(ch, (counts.get(ch) ?? 0) + 1);
   }
-  return letters === 0 ? 0 : foreign / letters;
+  return counts;
 }
 
 /**
- * How much of `text` a candidate's own alphabet cannot account for — 0..1.
+ * Derive the alphabet a text is written in, before asking anyone to account for
+ * it.
  *
- * Counted over the letters of that candidate's script only, so a Cyrillic
- * headline followed by a Latin brand name does not read as evidence against
- * either. Noise (URLs, @handles, #hashtags) is stripped exactly as
- * {@link classifyBySnippet} strips it.
+ * Derived ONCE and then compared against candidates, rather than re-walking the
+ * text per candidate: for a screen reporting on a whole roster that is one pass
+ * plus a set lookup each, and — more to the point — it makes "the text's
+ * alphabet" a thing the caller can hold, print and diff, instead of a number
+ * falling out of a comparison.
+ *
+ * Scrubbed first ({@link stripNoise}, {@link stripQuoted}): a URL's letters and
+ * a quotation's letters are in the string without being the string's own.
+ */
+export function textAlphabet(text: string): TextAlphabet {
+  return alphabetOfScrubbed(stripQuoted(stripNoise(text)));
+}
+
+/**
+ * Compare a derived {@link TextAlphabet} against one candidate.
+ *
+ * The primitive form, for a caller holding an alphabet and asking about several
+ * candidates — an evidence report, an audit trail, a roster editor showing what
+ * each choice would do.
+ */
+export function contradictionOf(alphabet: TextAlphabet, profile: LanguageProfile): Contradiction {
+  const script = scriptOfProfile(profile);
+  if (script === null) return NO_CONTRADICTION;
+  const inScript = script === "cyrillic" ? CYRILLIC_RE : LATIN_RE;
+  // `marks` joins the alphabet for the same reason it does at rung 1: an
+  // apostrophe is part of how uk/be spell, not a foreign letter. (It is not a
+  // letter, so it never reaches the alphabet — kept for the profiles whose
+  // marks ever grow to include one.)
+  const own = new Set(profile.alphabet + (profile.marks ?? ""));
+  const letters: string[] = [];
+  let foreign = 0;
+  let total = 0;
+  for (const [ch, count] of alphabet) {
+    // Only the candidate's own script is its business: a Cyrillic headline
+    // followed by a Latin brand name is not evidence against either language.
+    if (!inScript.test(ch)) continue;
+    total += count;
+    if (own.has(ch)) continue;
+    foreign += count;
+    letters.push(ch);
+  }
+  return { letters, share: total === 0 ? 0 : foreign / total };
+}
+
+/**
+ * How much of `text` a candidate's own alphabet cannot account for.
  *
  * WHY THIS EXISTS AT ALL. The rung ladder is additive: it counts what each
  * candidate uniquely OWNS and never counts what a candidate cannot possibly
@@ -250,11 +278,11 @@ function shareOfCleaned(cleaned: string, profile: LanguageProfile): number {
  * cannot see that; this is what sees it.
  *
  * Exported so a caller that has to EXPLAIN a verdict (a diagnostics screen, an
- * audit trail) can show the same number the veto acted on, rather than deriving
- * a second, drifting copy of it.
+ * audit trail) can show the same letters and the same number the veto acted on,
+ * rather than deriving a second, drifting copy of them.
  */
-export function contradictionShare(text: string, profile: LanguageProfile): number {
-  return shareOfCleaned(stripNoise(text), profile);
+export function contradiction(text: string, profile: LanguageProfile): Contradiction {
+  return contradictionOf(textAlphabet(text), profile);
 }
 
 interface Membership {
@@ -350,7 +378,7 @@ function wordRung(
  * Classify `text` among `candidates`. Synchronous and allocation-light. Returns
  * `"unknown"` on empty evidence, on a tie inside the candidate set, when nothing
  * is distinctive, or when the winning candidate is contradicted by the text
- * itself (see {@link contradictionShare}).
+ * itself (see {@link contradiction}).
  *
  * Generic over the concrete profile type `P`, inferred from `candidates`. The
  * optional `rung3` resolver is typed over the same `P`, so a consumer with a
@@ -381,7 +409,7 @@ export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
 
   /**
    * A winner the text itself argues against is no winner — see
-   * {@link contradictionShare}.
+   * {@link contradiction}.
    *
    * Applied to whichever rung decided, franc's included: every rung answers the
    * same forced-choice question, so every rung can be forced into the same wrong
@@ -389,10 +417,21 @@ export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
    * promoted — a set that could not account for the text does not get a second
    * guess at it. `"unknown"` is the honest answer, and the signal a caller needs
    * to widen the roster or escalate.
+   *
+   * Measured over the text's alphabet MINUS its quotations, while the rungs
+   * above tallied the text whole. The asymmetry is deliberate and is the whole
+   * point of measuring separately: a quotation is someone else's language and
+   * cannot be held against this author, whereas removing it from the tally would
+   * silently re-decide verdicts that have nothing to do with this veto. One
+   * derivation, computed the first time a rung produces a winner.
    */
+  // Derived on first use: the texts that never reach a verdict — most of them —
+  // never pay for it.
+  let alphabet: TextAlphabet | undefined;
   const settle = (verdict: RungVerdict): SnippetVerdict => {
     const winner = scoped.find((c) => c.code === verdict.language);
-    if (winner && shareOfCleaned(cleaned, winner) >= CONTRADICTION_SHARE) return UNKNOWN;
+    alphabet ??= alphabetOfScrubbed(stripQuoted(cleaned));
+    if (winner && contradictionOf(alphabet, winner).share >= CONTRADICTION_SHARE) return UNKNOWN;
     return { ...verdict, discriminating };
   };
 

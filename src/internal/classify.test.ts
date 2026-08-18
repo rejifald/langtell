@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyBySnippet,
+  contradiction,
   CONTRADICTION_SHARE,
-  contradictionShare,
+  contradictionOf,
   distinctiveChars,
   scopeCandidates,
   stripNoise,
+  stripQuoted,
+  textAlphabet,
 } from "./classify.js";
 import { be, bg, en, kk, mk, ru, sr, uk } from "../profiles.js";
 
@@ -230,7 +233,7 @@ describe("classifyBySnippet — the veto leaves earned verdicts alone", () => {
     expect(classifyBySnippet("Беларусь — гэта краіна ў цэнтры Еўропы", [uk, ru, be])).toMatchObject(
       { language: "be" },
     );
-    expect(contradictionShare("Беларусь — гэта краіна ў цэнтры Еўропы", be)).toBe(0);
+    expect(contradiction("Беларусь — гэта краіна ў цэнтры Еўропы", be).share).toBe(0);
   });
 
   it("a borrowed proper noun is a loanword, not a contradiction", () => {
@@ -258,34 +261,86 @@ describe("classifyBySnippet — the veto leaves earned verdicts alone", () => {
   });
 });
 
-describe("contradictionShare", () => {
+describe("contradiction", () => {
   it("is 0 for text a profile can spell", () => {
-    expect(contradictionShare("Слава Україні", uk)).toBe(0);
-    expect(contradictionShare("Это русский язык", ru)).toBe(0);
+    expect(contradiction("Слава Україні", uk).share).toBe(0);
+    expect(contradiction("Это русский язык", ru).share).toBe(0);
   });
 
   it("counts only letters of the profile's own script", () => {
     // The Latin brand name is not evidence against a Cyrillic candidate.
-    expect(contradictionShare("Купуйте квитки на Ryanair", uk)).toBe(0);
+    expect(contradiction("Купуйте квитки на Ryanair", uk).share).toBe(0);
   });
 
   it("ignores URLs, @handles and #hashtags, as the classifier does", () => {
     // The handle is Cyrillic and carries `ы` — inside the noise it must not
     // count against a Ukrainian reading of the prose.
-    expect(contradictionShare("Слава Україні @мысли", uk)).toBe(0);
+    expect(contradiction("Слава Україні @мысли", uk).share).toBe(0);
   });
 
-  it("rises with letters the profile does not have", () => {
-    expect(contradictionShare("ыыыы", uk)).toBe(1);
-    expect(
-      contradictionShare("Мова і культура Беларусі маюць багатую гісторыю", uk),
-    ).toBeGreaterThan(CONTRADICTION_SHARE);
+  it("rises with letters the profile does not have, and names them", () => {
+    expect(contradiction("ыыыы", uk)).toEqual({ letters: ["ы"], share: 1 });
+    const be_text = contradiction("Мова і культура Беларусі маюць багатую гісторыю", uk);
+    expect(be_text.share).toBeGreaterThan(CONTRADICTION_SHARE);
+    expect(be_text.letters).toEqual(["ы"]);
+  });
+
+  it("leaves a quotation to its own author", () => {
+    // A Ukrainian sentence carrying a Russian quotation is still Ukrainian, and
+    // the Russian letters inside the marks are evidence about the person quoted.
+    const quoted =
+      "Бабуся любила повторювати цю фразу за столом, і кожен онук її пам ятає: " +
+      "«Когда я была маленькой, мы жили совсем по-другому, в полном достатке»";
+    expect(contradiction(quoted, uk)).toEqual({ letters: [], share: 0 });
+  });
+
+  it("does not eat an apostrophe word for a quotation", () => {
+    // Single quotes are never paired: uk/be spell with an apostrophe, and a
+    // pattern that took them would swallow the inside of ordinary words.
+    expect(stripQuoted("комп'ютер і сім'я")).toBe("комп'ютер і сім'я");
+    expect(contradiction("комп'ютер і сім'я", uk).share).toBe(0);
+  });
+
+  it("keeps a text that IS a quotation", () => {
+    // A pull-quote or a headline in guillemets: strip it and nothing is left to
+    // judge, so the veto would be disarmed exactly where it is needed.
+    const headline = "«Гэта цікавая кніга і добры фільм пра нашу краіну»";
+    expect(contradiction(headline, uk).share).toBeGreaterThan(CONTRADICTION_SHARE);
+    expect(classifyBySnippet(headline, [uk, ru]).language).toBe("unknown");
   });
 
   it("a profile that cannot spell its own words contradicts itself", () => {
     // Documented, not incidental: `alphabet` is what the veto measures against,
     // so a partial alphabet silently disarms the word rungs for that candidate.
     const partial = { code: "xa", alphabet: "abc", words: { function: [], frequent: ["cat"] } };
-    expect(contradictionShare("cat", partial)).toBeGreaterThan(CONTRADICTION_SHARE);
+    expect(contradiction("cat", partial).share).toBeGreaterThan(CONTRADICTION_SHARE);
+  });
+});
+
+describe("textAlphabet", () => {
+  it("is the letters the text uses, with their counts, in first-seen order", () => {
+    expect([...textAlphabet("Мова мова")]).toEqual([
+      ["м", 2],
+      ["о", 2],
+      ["в", 2],
+      ["а", 2],
+    ]);
+  });
+
+  it("leaves out what is not the text's own — noise and quotations", () => {
+    expect([...textAlphabet("аб https://example.com/ыы").keys()]).toEqual(["а", "б"]);
+    expect([...textAlphabet('аб "ыы"').keys()]).toEqual(["а", "б"]);
+  });
+
+  it("is derived once and compared many times", () => {
+    // The reason it is a separate export: a report over a roster walks the text
+    // once, not once per candidate, and every row is a set lookup on the same
+    // derivation the verdict used.
+    const alphabet = textAlphabet("Беларусь — гэта краіна ў цэнтры Еўропы");
+    expect(contradictionOf(alphabet, uk).letters).toContain("ў");
+    expect(contradictionOf(alphabet, ru).letters).toContain("і");
+    expect(contradictionOf(alphabet, be)).toEqual({ letters: [], share: 0 });
+    // An out-of-script candidate has nothing to answer for.
+    expect(contradictionOf(alphabet, en)).toEqual({ letters: [], share: 0 });
   });
 });

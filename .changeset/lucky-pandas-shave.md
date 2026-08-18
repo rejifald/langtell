@@ -21,9 +21,23 @@ The threshold is measured, not picked: an in-language snippet quoting a sibling
 runs 0.3–0.9 %, a borrowed proper noun 1.4–1.5 %, and genuinely other-language
 text 2.3–17 %.
 
-New on `langtell/classify`: `contradictionShare(text, profile)` and
-`CONTRADICTION_SHARE`, so a caller explaining a verdict shows the number the
-veto acted on rather than deriving a second, drifting copy.
+Quotations are not held against the author who quoted them. They are scrubbed
+before the measurement alongside URLs and @handles — a Ukrainian article quoting
+a Russian sentence is still Ukrainian — unless the quotation IS the text (half
+the letters or more: a pull-quote, a headline in guillemets), in which case it is
+the content and is measured like any other. Paired double marks only (`«» "" “”
+„“`), never the single forms that uk/be spell words with. The rung tallies still
+read the text whole; only the veto's measurement excludes quotations.
+
+New on `langtell/classify`: `textAlphabet(text)` derives the letters a text
+actually uses, once, and `contradictionOf(alphabet, profile)` asks one candidate
+to account for them — returning the letters it cannot and their weight. A report
+over a roster is then one pass plus a set lookup per candidate, on the same
+derivation the verdict used. `contradiction(text, profile)` is the one-text
+convenience; `CONTRADICTION_SHARE` is the threshold itself.
+
+The core bundle budget moves 3.25 kB → 3.35 kB: the veto and the derivation are
+reachable from `compile`, and 29 B of brotli is what they cost there.
 
 Also drops 23 Russian words (`это`, `ты`, `который`, …) that OpenSubtitles'
 Ukrainian content set had bled into `uk.words.frequent`. Each is spelled with a

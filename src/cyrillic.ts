@@ -39,6 +39,7 @@
  * use case needs more than letter signals can give, escalate to
  * {@link classifyBySnippet} or a franc-backed source.
  */
+import { stripQuoted } from "./internal/scrub.js";
 
 /** The four Cyrillic languages this fast-path tells apart, plus the `"unknown"`
  *  sentinel when letter signals are insufficient. */
@@ -163,11 +164,17 @@ export function detectCyrillicLanguage(text: string): CyrillicVerdict {
  * call. Counted as a share of Cyrillic letters, so a proper noun borrowed from a
  * neighbour (`Ђоковић` in a Russian sentence, ~1.5 %) reads as the loanword it is
  * while a whole sentence in another language does not.
+ *
+ * Quotations are left out of the count — someone else's words, in whatever
+ * language they said them, are not evidence against this author. The positive
+ * cascade above still reads the text whole; only this measurement excludes them,
+ * exactly as the roster-relative classifier splits the two.
  */
 function contradicted(text: string, language: Exclude<CyrillicLanguage, "unknown">): boolean {
-  const cyrillic = count(text, CYRILLIC);
+  const own = stripQuoted(text);
+  const cyrillic = count(own, CYRILLIC);
   if (cyrillic === 0) return false;
-  return count(text, FOREIGN[language]) / cyrillic >= MAX_FOREIGN_SHARE;
+  return count(own, FOREIGN[language]) / cyrillic >= MAX_FOREIGN_SHARE;
 }
 
 /** The positive-signal cascade, before {@link detectCyrillicLanguage} checks the

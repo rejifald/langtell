@@ -26,9 +26,13 @@
  *
  * The ladder answers a forced choice, so it carries one veto: a winner whose own
  * alphabet cannot account for {@link CONTRADICTION_SHARE} of the text loses to
- * `"unknown"` rather than speaking for a language that is not on the roster.
- * {@link contradictionShare} is the same measurement, exported for callers that
- * have to explain a verdict instead of only acting on it.
+ * `"unknown"` rather than speaking for a language that is not on the roster. The
+ * measurement behind it is exported too, for callers that have to explain a
+ * verdict instead of only acting on it: {@link textAlphabet} derives the letters
+ * a text actually uses (its quotations and URLs left out, being someone else's
+ * words and nobody's words respectively), and {@link contradictionOf} asks one
+ * candidate to account for them — the letters it cannot, and their weight.
+ * {@link contradiction} is the one-text convenience over both.
  *
  * For callers building a rung-3 resolver that ALSO runs its backstop off-path
  * (e.g. an oracle over raw, unscoped candidates), two helpers from the same
@@ -40,10 +44,19 @@
  */
 export {
   classifyBySnippet,
+  contradiction,
   CONTRADICTION_SHARE,
-  contradictionShare,
+  contradictionOf,
   FRANC_RUNG,
   RUNG3_MIN_LENGTH,
   scopeCandidates,
+  textAlphabet,
 } from "./internal/classify.js";
-export type { Rung, Rung3Resolver, RungVerdict, SnippetVerdict } from "./internal/classify.js";
+export type {
+  Contradiction,
+  Rung,
+  Rung3Resolver,
+  RungVerdict,
+  SnippetVerdict,
+  TextAlphabet,
+} from "./internal/classify.js";

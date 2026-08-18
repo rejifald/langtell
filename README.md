@@ -114,15 +114,37 @@ classifyBySnippet("Мова і культура Беларусі маюць ба
 // → { language: "unknown", … }   `ы` is not a letter Ukrainian has
 classifyBySnippet("Мова і культура Беларусі маюць багатую гісторыю", [uk, ru, be]);
 // → { language: "be", … }        widen the roster and the text stops arguing
-
-contradictionShare("Слава Україні", uk); // → 0
 ```
 
-Incidental foreignness is not a contradiction: a borrowed proper noun runs
-~1.5 % and an in-language article quoting its neighbour ~0.6–0.9 %, both below
-the line, while genuinely other-language text sits at 2.3 % and up. `alphabet`
-is what the veto measures against, so a profile you write yourself should carry
-its language's full alphabet — a partial one contradicts its own word lists.
+The measurement is exported too, for callers that have to _explain_ a verdict
+rather than only act on it. Derive the text's own alphabet once, then ask each
+candidate to account for it:
+
+```ts
+import { textAlphabet, contradictionOf, contradiction } from "langtell/classify";
+
+const alphabet = textAlphabet("Беларусь — гэта краіна ў цэнтры Еўропы");
+contradictionOf(alphabet, uk); // → { letters: ["ў"], share: 0.116 }
+contradictionOf(alphabet, be); // → { letters: [],    share: 0 }
+
+contradiction("Слава Україні", uk); // → { letters: [], share: 0 }  one-text form
+```
+
+**Quotations belong to whoever said them.** They are scrubbed before the
+measurement, alongside URLs and @handles — a Ukrainian article quoting a Russian
+sentence is still a Ukrainian article, and the Russian letters inside the marks
+are evidence about the person being quoted, not the person writing. Unless the
+quotation _is_ the text: at half the letters or more (a pull-quote, a headline in
+guillemets) it is the content, and it is measured like any other. Only paired
+double marks count — `«» "" “” „“` — never the single forms, which uk/be spell
+words with (`комп'ютер`).
+
+What the threshold is left to survive is the other kind of foreignness, the kind
+with no structure to exploit: a borrowed proper noun runs ~1.5 % (`Нұрсұлтан` in
+a Russian article), while genuinely other-language text sits at 2.3 % and up.
+`alphabet` is what all of this measures against, so a profile you write yourself
+should carry its language's full alphabet — a partial one contradicts its own
+word lists.
 
 ### Roster-free Cyrillic fast-path
 
@@ -145,7 +167,8 @@ isUkrainian("Слава Україні"); // → true
 
 It returns `"unknown"` rather than guessing when the signals are insufficient — no
 Cyrillic at all, a uk/ru tie, or only an ambiguous `э` — and withdraws a call the
-text itself argues with, on the same 2 % rule as the roster-relative classifier:
+text itself argues with, on the same 2 % rule as the roster-relative classifier,
+quotations excluded the same way:
 `Мова і культура Беларусі маюць багатую гісторыю` is not Ukrainian, however many
 `і`s it has, because Ukrainian has no `ы`. The `CyrillicVerdict` also
 carries the raw `ukScore` / `ruScore` tallies behind the call. Zero-dependency and
