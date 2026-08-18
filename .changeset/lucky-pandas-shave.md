@@ -1,5 +1,5 @@
 ---
-"langtell": minor
+"langtell": patch
 ---
 
 Withdraw a verdict the text itself contradicts, in both detectors.
