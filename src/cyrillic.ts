@@ -29,10 +29,17 @@
  * silently guessing (Russian uses it in loanwords/`Это`, Belarusian in
  * `гэта`/`сэрца`).
  *
+ * Every call is checked against the letters that argue with it before it is
+ * returned: a verdict whose own alphabet cannot account for the snippet (`ы` in
+ * a text called Ukrainian) is withdrawn to `"unknown"`. Positive signals alone
+ * cannot tell a fifth language built from the same letters — Belarusian without
+ * a `ў` — from the four this module claims.
+ *
  * Zero-dependency and side-effect-free. The cheap heuristic stays cheap; if a
  * use case needs more than letter signals can give, escalate to
  * {@link classifyBySnippet} or a franc-backed source.
  */
+import { stripQuoted } from "./internal/scrub.js";
 
 /** The four Cyrillic languages this fast-path tells apart, plus the `"unknown"`
  *  sentinel when letter signals are insufficient. */
@@ -53,6 +60,42 @@ const SIBLING_DISTINCTIVE = /[ђћџѓќѕљњјәғқңөұүһ]/gi;
 // U+0400–U+04FF is the Cyrillic Unicode block; written as explicit \u escapes
 // so the range bounds are unambiguous (regexp/no-obscure-range).
 const CYRILLIC = /[\u0400-\u04FF]/g;
+
+/**
+ * Per language, the letters its alphabet does NOT contain — evidence against a
+ * call, whoever else the letter might belong to.
+ *
+ * The signal sets above only argue FOR a language, and a cascade of positive
+ * signals has no way to notice that it is reading a fifth language built out of
+ * the same letters. Belarusian is exactly that: `і` from the Ukrainian set, `ы`
+ * and `ё` from the Russian one, and — in a snippet that happens to carry no `ў` —
+ * nothing at all to say it is neither. `Мова і культура Беларусі маюць багатую
+ * гісторыю` came back Ukrainian on four `і`s while a `ы` Ukrainian does not have
+ * sat in the same sentence. These are the sets that see that.
+ *
+ * Each is the complement of that language's alphabet within the four, so every
+ * entry is checkable against the profiles in `./profiles.ts`: uk has no ы/ё/ъ/э/ў,
+ * ru no і/ї/є/ґ/ў, be no и/щ/ъ/ї/є/ґ, bg no ы/ё/э/і/ї/є/ґ/ў.
+ */
+const FOREIGN: Readonly<Record<Exclude<CyrillicLanguage, "unknown">, RegExp>> = {
+  uk: /[ыёъэў]/gi,
+  ru: /[іїєґў]/gi,
+  be: /[ищъїєґ]/gi,
+  bg: /[ыёэіїєґў]/gi,
+};
+
+/**
+ * Share of a snippet's Cyrillic letters that may be foreign to a verdict before
+ * the verdict is withdrawn.
+ *
+ * Set from the same measurement as the roster-relative classifier's
+ * `CONTRADICTION_SHARE`, and deliberately identical to it: a snippet that is too
+ * contradicted for one of langtell's detectors is too contradicted for the other,
+ * and two thresholds would be two answers to one question. On this corpus a
+ * genuine sibling citation inside monolingual prose sits at 0.6–0.9 %, while
+ * Belarusian misread as Ukrainian sits at 2.3–5 %.
+ */
+const MAX_FOREIGN_SHARE = 0.02;
 
 /** Minimum Cyrillic-letter count before the fallback guesses a language. Below
  *  this, a short snippet (`Привет`, `Хочу`) is too ambiguous to act on. */
@@ -104,9 +147,39 @@ function countSignals(text: string): Signals {
 /**
  * Identify the Cyrillic language of `text` by distinctive letters, returning the
  * chosen language and the uk/ru tallies behind it. `"unknown"` when there is no
- * Cyrillic evidence, on a uk/ru tie, or when only an ambiguous `э` is present.
+ * Cyrillic evidence, on a uk/ru tie, when only an ambiguous `э` is present, or
+ * when the text contradicts the call — see {@link FOREIGN}.
  */
 export function detectCyrillicLanguage(text: string): CyrillicVerdict {
+  const verdict = decide(text);
+  if (verdict.language === "unknown" || !contradicted(text, verdict.language)) return verdict;
+  // The tallies are kept: they are the account of a call that was withdrawn, and
+  // a caller escalating to the roster-relative classifier is better served by
+  // "here is what the letters said, and it did not hold up" than by zeroes.
+  return { ...verdict, language: "unknown" };
+}
+
+/**
+ * Whether `text` carries enough letters `language` does not have to withdraw the
+ * call. Counted as a share of Cyrillic letters, so a proper noun borrowed from a
+ * neighbour (`Ђоковић` in a Russian sentence, ~1.5 %) reads as the loanword it is
+ * while a whole sentence in another language does not.
+ *
+ * Quotations are left out of the count — someone else's words, in whatever
+ * language they said them, are not evidence against this author. The positive
+ * cascade above still reads the text whole; only this measurement excludes them,
+ * exactly as the roster-relative classifier splits the two.
+ */
+function contradicted(text: string, language: Exclude<CyrillicLanguage, "unknown">): boolean {
+  const own = stripQuoted(text);
+  const cyrillic = count(own, CYRILLIC);
+  if (cyrillic === 0) return false;
+  return count(own, FOREIGN[language]) / cyrillic >= MAX_FOREIGN_SHARE;
+}
+
+/** The positive-signal cascade, before {@link detectCyrillicLanguage} checks the
+ *  winner against the letters that argue with it. */
+function decide(text: string): CyrillicVerdict {
   const { ukScore, ruDistinctive, beScore, hardSigns, eOborot, cyrillicCount, siblingDistinctive } =
     countSignals(text);
 

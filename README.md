@@ -97,6 +97,55 @@ This powers per-rung safety gates ("act only when a _weak_ rung clears a high
 margin") and diagnostics — uses a single confidence number can't serve. The
 high-level `compile`/`detect`/`fuse` output is unchanged; this is purely additive.
 
+#### A closed set says "unknown" rather than the nearest thing it has
+
+The ladder counts what each candidate uniquely _owns_, which can only ever argue
+_for_ someone — so on its own it has no answer to text written in a language the
+roster does not carry. Belarusian handed to `{uk, ru}` spends its `і`s electing
+Ukrainian, while `ы`, `ў` and `э` — letters Ukrainian does not have at all —
+count for nobody and stop nothing.
+
+So a winner is checked against the text one last time: a candidate whose own
+alphabet cannot account for **2 %** of the letters (`CONTRADICTION_SHARE`) loses
+to `"unknown"`, and the runner-up is not promoted in its place.
+
+```ts
+classifyBySnippet("Мова і культура Беларусі маюць багатую гісторыю", [uk, ru]);
+// → { language: "unknown", … }   `ы` is not a letter Ukrainian has
+classifyBySnippet("Мова і культура Беларусі маюць багатую гісторыю", [uk, ru, be]);
+// → { language: "be", … }        widen the roster and the text stops arguing
+```
+
+The measurement is exported too, for callers that have to _explain_ a verdict
+rather than only act on it. Derive the text's own alphabet once, then ask each
+candidate to account for it:
+
+```ts
+import { textAlphabet, contradictionOf, contradiction } from "langtell/classify";
+
+const alphabet = textAlphabet("Беларусь — гэта краіна ў цэнтры Еўропы");
+contradictionOf(alphabet, uk); // → { letters: ["ў"], share: 0.116 }
+contradictionOf(alphabet, be); // → { letters: [],    share: 0 }
+
+contradiction("Слава Україні", uk); // → { letters: [], share: 0 }  one-text form
+```
+
+**Quotations belong to whoever said them.** They are scrubbed before the
+measurement, alongside URLs and @handles — a Ukrainian article quoting a Russian
+sentence is still a Ukrainian article, and the Russian letters inside the marks
+are evidence about the person being quoted, not the person writing. Unless the
+quotation _is_ the text: at half the letters or more (a pull-quote, a headline in
+guillemets) it is the content, and it is measured like any other. Only paired
+double marks count — `«» "" “” „“` — never the single forms, which uk/be spell
+words with (`комп'ютер`).
+
+What the threshold is left to survive is the other kind of foreignness, the kind
+with no structure to exploit: a borrowed proper noun runs ~1.5 % (`Нұрсұлтан` in
+a Russian article), while genuinely other-language text sits at 2.3 % and up.
+`alphabet` is what all of this measures against, so a profile you write yourself
+should carry its language's full alphabet — a partial one contradicts its own
+word lists.
+
 ### Roster-free Cyrillic fast-path
 
 `langtell/classify` scores a snippet _relative to a roster you pass in_.
@@ -117,7 +166,11 @@ isUkrainian("Слава Україні"); // → true
 ```
 
 It returns `"unknown"` rather than guessing when the signals are insufficient — no
-Cyrillic at all, a uk/ru tie, or only an ambiguous `э`. The `CyrillicVerdict` also
+Cyrillic at all, a uk/ru tie, or only an ambiguous `э` — and withdraws a call the
+text itself argues with, on the same 2 % rule as the roster-relative classifier,
+quotations excluded the same way:
+`Мова і культура Беларусі маюць багатую гісторыю` is not Ukrainian, however many
+`і`s it has, because Ukrainian has no `ы`. The `CyrillicVerdict` also
 carries the raw `ukScore` / `ruScore` tallies behind the call. Zero-dependency and
 side-effect-free; escalate to `classifyBySnippet` or a franc-backed source when
 letter signals aren't enough.

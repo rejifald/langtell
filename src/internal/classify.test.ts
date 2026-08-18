@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { classifyBySnippet, distinctiveChars, scopeCandidates, stripNoise } from "./classify.js";
+import {
+  classifyBySnippet,
+  contradiction,
+  CONTRADICTION_SHARE,
+  contradictionOf,
+  distinctiveChars,
+  scopeCandidates,
+  stripNoise,
+  stripQuoted,
+  textAlphabet,
+} from "./classify.js";
 import { be, bg, en, kk, mk, ru, sr, uk } from "../profiles.js";
 
 /** True if any code point of `word` is in `distinctive`. */
@@ -23,9 +33,10 @@ describe("classifyBySnippet — reports the deciding rung and margin", () => {
     expect(classifyBySnippet("работа", [uk, ru])).toMatchObject({ language: "ru", rung: "2b" });
   });
 
-  it("the ladder breaks a rung-1 tie at a later rung (`і ы`)", () => {
-    // і ties ы at rung 1, but і is also a uk function word → rung 2a decides.
-    expect(classifyBySnippet("і ы", [uk, ru])).toMatchObject({ language: "uk", rung: "2a" });
+  it("the ladder carries on past a rung-1 blank to the word rungs", () => {
+    // No distinctive letter on either side (`и` is shared) — rung 1 scores 0-0
+    // and the ladder keeps going, deciding on the function word `и`.
+    expect(classifyBySnippet("Кофе и чай", [uk, ru])).toMatchObject({ rung: "2a" });
   });
 
   it("unknown carries margin 0 and null rung", () => {
@@ -141,5 +152,195 @@ describe("classifyBySnippet — Cyrillic-sibling discrimination (sr/mk/kk)", () 
 
   it("Russian in the same roster still resolves to ru, not a sibling", () => {
     expect(classifyBySnippet("Это русский язык, объём и мысли", roster).language).toBe("ru");
+  });
+});
+
+describe("classifyBySnippet — a contradicted winner loses to unknown", () => {
+  // The closed set {uk, ru} does not contain Belarusian, and Belarusian is built
+  // from letters both of them own plus a few neither does. Rung 1 hands the `і`s
+  // to Ukrainian; `ы`/`э`/`ў` — none of which Ukrainian has — are what says the
+  // answer cannot be Ukrainian.
+  it("Belarusian carrying no ў is not called Ukrainian on its і's", () => {
+    expect(
+      classifyBySnippet("Мова і культура Беларусі маюць багатую гісторыю", [uk, ru]),
+    ).toMatchObject({ language: "unknown", rung: null });
+  });
+
+  it("Belarusian with э and ы is not called Ukrainian", () => {
+    expect(
+      classifyBySnippet("Гэта цікавая кніга і добры фільм пра нашу краіну", [uk, ru]).language,
+    ).toBe("unknown");
+  });
+
+  it("Belarusian carrying ў is not called Russian either", () => {
+    expect(classifyBySnippet("Беларусь — гэта краіна ў цэнтры Еўропы", [uk, ru]).language).toBe(
+      "unknown",
+    );
+  });
+
+  it("a word-rung winner is vetoed the same as a letter-rung one", () => {
+    // Not one distinctive letter in the roster's favour; the verdict came from
+    // rung 2, and the contradiction applies there too.
+    const v = classifyBySnippet(
+      "Прывітанне! Як твае справы сёння? Дзякуй вялікі за дапамогу і падтрымку.",
+      [uk, ru],
+    );
+    expect(v.language).toBe("unknown");
+  });
+
+  it("а rung-1 tie between letters neither side can spell is unknown, not a word-rung call", () => {
+    // `і` ties `ы`: each is a letter the other candidate does not have, so the
+    // text argues against both. It is Belarusian's signature, not a tie to break.
+    expect(classifyBySnippet("і ы", [uk, ru]).language).toBe("unknown");
+  });
+
+  it("the veto is script-symmetric: German against a lone en candidate", () => {
+    // Non-discriminating rosters are where a forced choice is most confident and
+    // least earned — every Latin text "matches" the only Latin candidate.
+    expect(
+      classifyBySnippet("Die Prüfung war für alle Schüler außerordentlich schwierig", [uk, en])
+        .language,
+    ).toBe("unknown");
+  });
+
+  it("Polish against a lone en candidate", () => {
+    expect(
+      classifyBySnippet("Wczoraj spotkałem się z przyjaciółmi w kawiarni na rynku", [en]).language,
+    ).toBe("unknown");
+  });
+
+  it("does NOT promote the runner-up — a set that cannot account for the text abstains", () => {
+    // ru is the only other candidate and it is contradicted too (by `і`/`ў`).
+    // Even were it not, the answer stays `unknown`: the winner losing its claim
+    // is not evidence for anyone else.
+    expect(classifyBySnippet("Беларусь — гэта краіна ў цэнтры Еўропы", [uk, ru]).rung).toBeNull();
+  });
+});
+
+describe("classifyBySnippet — the veto leaves earned verdicts alone", () => {
+  it("Ukrainian is still Ukrainian", () => {
+    expect(classifyBySnippet("Слава Україні, її мова і культура", [uk, ru]).language).toBe("uk");
+  });
+
+  it("Russian is still Russian", () => {
+    expect(classifyBySnippet("Это русский язык, объём и мысли", [uk, ru]).language).toBe("ru");
+  });
+
+  it("Belarusian IS Belarusian once the roster carries it", () => {
+    // The point of the veto is a roster that cannot account for the text — not a
+    // penalty on Belarusian. Add be and the text stops contradicting its winner
+    // (be's own contradiction share here is 0), so the verdict lands.
+    expect(classifyBySnippet("Беларусь — гэта краіна ў цэнтры Еўропы", [uk, ru, be])).toMatchObject(
+      { language: "be" },
+    );
+    expect(contradiction("Беларусь — гэта краіна ў цэнтры Еўропы", be).share).toBe(0);
+  });
+
+  it("a borrowed proper noun is a loanword, not a contradiction", () => {
+    // ~1.5 % of the letters. Withdrawing here would mean any Russian article
+    // about a neighbour stops being detectable as Russian.
+    const ru_with_sr =
+      "Сербский теннисист Новак Ђоковић выиграл турнир в Белграде. Он поблагодарил " +
+      "болельщиков и рассказал о планах на следующий сезон, который начнётся уже в январе.";
+    expect(classifyBySnippet(ru_with_sr, [uk, ru]).language).toBe("ru");
+  });
+
+  it("an article quoting its neighbour keeps its own language", () => {
+    const uk_with_ru =
+      "Сьогодні в Києві відкрилася нова виставка українського мистецтва. Російський " +
+      "критик написав: «Это прекрасно». Експозиція триватиме до кінця літа, кажуть організатори.";
+    expect(classifyBySnippet(uk_with_ru, [uk, ru]).language).toBe("uk");
+  });
+
+  it("English with an accented citation is still English", () => {
+    const en_with_de =
+      "The exhibition opened last night with a short speech from the mayor, who " +
+      "greeted the visitors with a warm Grüße before the curator took over and " +
+      "walked the room through the collection piece by piece.";
+    expect(classifyBySnippet(en_with_de, [en]).language).toBe("en");
+  });
+});
+
+describe("contradiction", () => {
+  it("is 0 for text a profile can spell", () => {
+    expect(contradiction("Слава Україні", uk).share).toBe(0);
+    expect(contradiction("Это русский язык", ru).share).toBe(0);
+  });
+
+  it("counts only letters of the profile's own script", () => {
+    // The Latin brand name is not evidence against a Cyrillic candidate.
+    expect(contradiction("Купуйте квитки на Ryanair", uk).share).toBe(0);
+  });
+
+  it("ignores URLs, @handles and #hashtags, as the classifier does", () => {
+    // The handle is Cyrillic and carries `ы` — inside the noise it must not
+    // count against a Ukrainian reading of the prose.
+    expect(contradiction("Слава Україні @мысли", uk).share).toBe(0);
+  });
+
+  it("rises with letters the profile does not have, and names them", () => {
+    expect(contradiction("ыыыы", uk)).toEqual({ letters: ["ы"], share: 1 });
+    const be_text = contradiction("Мова і культура Беларусі маюць багатую гісторыю", uk);
+    expect(be_text.share).toBeGreaterThan(CONTRADICTION_SHARE);
+    expect(be_text.letters).toEqual(["ы"]);
+  });
+
+  it("leaves a quotation to its own author", () => {
+    // A Ukrainian sentence carrying a Russian quotation is still Ukrainian, and
+    // the Russian letters inside the marks are evidence about the person quoted.
+    const quoted =
+      "Бабуся любила повторювати цю фразу за столом, і кожен онук її пам ятає: " +
+      "«Когда я была маленькой, мы жили совсем по-другому, в полном достатке»";
+    expect(contradiction(quoted, uk)).toEqual({ letters: [], share: 0 });
+  });
+
+  it("does not eat an apostrophe word for a quotation", () => {
+    // Single quotes are never paired: uk/be spell with an apostrophe, and a
+    // pattern that took them would swallow the inside of ordinary words.
+    expect(stripQuoted("комп'ютер і сім'я")).toBe("комп'ютер і сім'я");
+    expect(contradiction("комп'ютер і сім'я", uk).share).toBe(0);
+  });
+
+  it("keeps a text that IS a quotation", () => {
+    // A pull-quote or a headline in guillemets: strip it and nothing is left to
+    // judge, so the veto would be disarmed exactly where it is needed.
+    const headline = "«Гэта цікавая кніга і добры фільм пра нашу краіну»";
+    expect(contradiction(headline, uk).share).toBeGreaterThan(CONTRADICTION_SHARE);
+    expect(classifyBySnippet(headline, [uk, ru]).language).toBe("unknown");
+  });
+
+  it("a profile that cannot spell its own words contradicts itself", () => {
+    // Documented, not incidental: `alphabet` is what the veto measures against,
+    // so a partial alphabet silently disarms the word rungs for that candidate.
+    const partial = { code: "xa", alphabet: "abc", words: { function: [], frequent: ["cat"] } };
+    expect(contradiction("cat", partial).share).toBeGreaterThan(CONTRADICTION_SHARE);
+  });
+});
+
+describe("textAlphabet", () => {
+  it("is the letters the text uses, with their counts, in first-seen order", () => {
+    expect([...textAlphabet("Мова мова")]).toEqual([
+      ["м", 2],
+      ["о", 2],
+      ["в", 2],
+      ["а", 2],
+    ]);
+  });
+
+  it("leaves out what is not the text's own — noise and quotations", () => {
+    expect([...textAlphabet("аб https://example.com/ыы").keys()]).toEqual(["а", "б"]);
+    expect([...textAlphabet('аб "ыы"').keys()]).toEqual(["а", "б"]);
+  });
+
+  it("is derived once and compared many times", () => {
+    // The reason it is a separate export: a report over a roster walks the text
+    // once, not once per candidate, and every row is a set lookup on the same
+    // derivation the verdict used.
+    const alphabet = textAlphabet("Беларусь — гэта краіна ў цэнтры Еўропы");
+    expect(contradictionOf(alphabet, uk).letters).toContain("ў");
+    expect(contradictionOf(alphabet, ru).letters).toContain("і");
+    expect(contradictionOf(alphabet, be)).toEqual({ letters: [], share: 0 });
+    // An out-of-script candidate has nothing to answer for.
+    expect(contradictionOf(alphabet, en)).toEqual({ letters: [], share: 0 });
   });
 });

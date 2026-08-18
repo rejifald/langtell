@@ -152,3 +152,73 @@ describe("detectCyrillicLanguage — tie-break", () => {
     expect(detectCyrillicLanguage("і і і і і ы ы ы ы ы").language).toBe("unknown");
   });
 });
+
+describe("detectCyrillicLanguage — a call the letters argue with is withdrawn", () => {
+  // The four positive signal sets can only vote FOR a language. Belarusian is
+  // assembled from the same letters — `і` from the Ukrainian set, `ы`/`ё` from
+  // the Russian one — so a Belarusian snippet that happens to carry no `ў` used
+  // to be handed to whichever set counted higher, which is Ukrainian more often
+  // than not.
+  it("Belarusian without ў is not called Ukrainian on its і's", () => {
+    expect(detectCyrillicLanguage("Мова і культура Беларусі маюць багатую гісторыю").language).toBe(
+      "unknown",
+    );
+  });
+
+  it("Belarusian with э and a single ы is not called Ukrainian", () => {
+    expect(
+      detectCyrillicLanguage("Гэта цікавая кніга і добры фільм пра нашу краіну").language,
+    ).toBe("unknown");
+  });
+
+  it("isUkrainian is false for Belarusian text", () => {
+    expect(isUkrainian("У Мінску сёння добрае надвор'е, і людзі гуляюць у парку")).toBe(false);
+  });
+
+  it("keeps the tallies behind a withdrawn call", () => {
+    // The verdict is gone; the account of it is not. A caller escalating to the
+    // roster-relative classifier is better served by what the letters said than
+    // by zeroes.
+    const v = detectCyrillicLanguage("Мова і культура Беларусі маюць багатую гісторыю");
+    expect(v.language).toBe("unknown");
+    expect(v.ukScore).toBeGreaterThan(0);
+  });
+
+  it("ў still decides Belarusian — the guard does not fire on its own language", () => {
+    expect(detectCyrillicLanguage("Беларусь — гэта краіна ў цэнтры Еўропы").language).toBe("be");
+  });
+
+  it("an incidental foreign word is not a contradiction", () => {
+    // ~0.7 % of the letters: withdrawing here would mean a Russian article that
+    // quotes its neighbour stops reading as Russian. (A Serbian or Kazakh name
+    // would bail earlier still, on the sibling guard above.)
+    const text =
+      "Сегодня в Москве прошла конференция. Украинский участник сказал: «Ми працюємо " +
+      "разом». Организаторы отметили высокий уровень докладов и живую дискуссию.";
+    expect(detectCyrillicLanguage(text).language).toBe("ru");
+  });
+
+  it("a quotation is not held against the author who quoted it", () => {
+    // Short enough that the Russian quotation is 39% of the letters — over the
+    // line if it counted, which is exactly the case a bare threshold gets wrong.
+    const text =
+      "Бабуся любила повторювати цю фразу щоразу, коли ми збиралися разом за столом " +
+      "у неділю, і кожен онук її пам ятає до сьогодні, бо вона казала це з усмішкою. " +
+      "«Когда я была маленькой, мы жили совсем по-другому, в полном достатке, и всё было проще»";
+    expect(detectCyrillicLanguage(text).language).toBe("uk");
+  });
+
+  it("but a text that IS the quotation is judged as itself", () => {
+    // Strip a pull-quote and nothing is left to judge, so the guard keeps it.
+    expect(
+      detectCyrillicLanguage("«Гэта цікавая кніга і добры фільм пра нашу краіну»").language,
+    ).toBe("unknown");
+  });
+
+  it("an article quoting its neighbour keeps its own language", () => {
+    const text =
+      "Сьогодні в Києві відкрилася нова виставка українського мистецтва. Російський " +
+      "критик написав: «Это прекрасно». Експозиція триватиме до кінця літа, кажуть організатори.";
+    expect(detectCyrillicLanguage(text).language).toBe("uk");
+  });
+});

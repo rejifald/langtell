@@ -123,14 +123,19 @@ describe("evidenceFromText — rung 2 (words)", () => {
   });
 
   it("synthetic frequent words decide in both directions", () => {
+    // Both alphabets span the whole Latin set on purpose: a profile that cannot
+    // SPELL its own word list contradicts itself, and `classifyBySnippet`
+    // withdraws such a verdict (see the contradiction tests in
+    // internal/classify.test.ts). The rung under test here is the word rung.
+    const latin = "abcdefghijklmnopqrstuvwxyz";
     const a: LanguageProfile = {
       code: "xa",
-      alphabet: "abc",
+      alphabet: latin,
       words: { function: [], frequent: ["cat"] },
     };
     const b: LanguageProfile = {
       code: "xb",
-      alphabet: "abc",
+      alphabet: latin,
       words: { function: [], frequent: ["dog"] },
     };
     expect(lang("cat", [a, b])).toBe("xa");
