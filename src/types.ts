@@ -163,6 +163,11 @@ export interface DetectorConfig<E extends readonly EvidenceSource[] = []> {
    *  `"candidate"` (current behavior); opt into `"unknown"` for a roster-closed,
    *  evidence-only policy. */
   nonDiscriminatingScript?: NonDiscriminatingScript;
+  /** Forwarded to the built-in text producer's classifier: judge each script on
+   *  its own evidence. Off by default. See `ClassifyOptions.isolateScripts` in
+   *  `langtell/classify`. Opt-in engines take their own option (e.g.
+   *  `createFrancEngine(candidates, { isolateScripts: true })`). */
+  isolateScripts?: boolean;
 }
 
 /** The compiled detector. Synchronous when every source is sync; `Promise`-typed

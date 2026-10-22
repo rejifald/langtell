@@ -1,5 +1,10 @@
 import type { LanguageEvidence, LanguageProfile } from "./types.js";
-import { classifyBySnippet, type Rung, type Rung3Resolver } from "./internal/classify.js";
+import {
+  classifyBySnippet,
+  type ClassifyOptions,
+  type Rung,
+  type Rung3Resolver,
+} from "./internal/classify.js";
 
 /**
  * Producer: candidate-relative script + lexical signals from the title text.
@@ -21,11 +26,12 @@ export function evidenceFromText(
   text: string | undefined,
   candidates?: readonly LanguageProfile[],
   rung3?: Rung3Resolver,
+  options?: ClassifyOptions,
 ): LanguageEvidence[] {
   if (text === undefined || text.trim().length === 0) return [];
   if (candidates === undefined || candidates.length === 0) return [];
 
-  const verdict = classifyBySnippet(text, candidates, rung3);
+  const verdict = classifyBySnippet(text, candidates, rung3, options);
   if (verdict.language === "unknown") return [];
 
   const item: LanguageEvidence = {

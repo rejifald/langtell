@@ -173,3 +173,14 @@ describe("compile (async path)", () => {
     expect(result.language).toBe("en");
   });
 });
+
+describe("compile — isolateScripts", () => {
+  const RU_SHOP = "Самые дешевые в Украине | Victron Multiplus II 48V 6k5va";
+
+  it("forwards to the text producer: a Cyrillic clause beats a Latin product name", () => {
+    expect(compile({ candidates: [uk, en, ru] })({ text: RU_SHOP }).language).toBe("en");
+    expect(
+      compile({ candidates: [uk, en, ru], isolateScripts: true })({ text: RU_SHOP }).language,
+    ).toBe("ru");
+  });
+});

@@ -63,3 +63,25 @@ describe("createFrancEngine", () => {
     expect(ev[0]?.language).toBe("ru");
   });
 });
+
+describe("evidenceFromFranc — isolateScripts", () => {
+  const ZELENSKY = "Interview with Володимир Зеленський on CNN";
+
+  it("by default, Latin letters lift a short Cyrillic name over the length floor", () => {
+    expect(evidenceFromFranc(ZELENSKY, [ukRaw, ruRaw])).toHaveLength(1);
+  });
+
+  it("measures the floor on the scope's own script, so a lone name abstains", () => {
+    expect(evidenceFromFranc(ZELENSKY, [ukRaw, ruRaw], { isolateScripts: true })).toEqual([]);
+    expect(
+      createFrancEngine([ukRaw, ruRaw], { isolateScripts: true }).detect({ text: ZELENSKY }),
+    ).toEqual([]);
+  });
+
+  it("still reads single-script text whole", () => {
+    const text = "Собака медленно бежала домой по дороге";
+    expect(evidenceFromFranc(text, [ukRaw, ruRaw], { isolateScripts: true })).toEqual(
+      evidenceFromFranc(text, [ukRaw, ruRaw]),
+    );
+  });
+});

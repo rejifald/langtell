@@ -5,11 +5,14 @@ import {
   CONTRADICTION_SHARE,
   contradictionOf,
   distinctiveChars,
+  MINORITY_MIN_LETTERS,
   scopeCandidates,
   stripNoise,
   stripQuoted,
   textAlphabet,
+  textInScope,
 } from "./classify.js";
+import type { LanguageProfile } from "../types.js";
 import { be, bg, en, kk, mk, ru, sr, uk } from "../profiles.js";
 
 /** True if any code point of `word` is in `distinctive`. */
@@ -342,5 +345,114 @@ describe("textAlphabet", () => {
     expect(contradictionOf(alphabet, be)).toEqual({ letters: [], share: 0 });
     // An out-of-script candidate has nothing to answer for.
     expect(contradictionOf(alphabet, en)).toEqual({ letters: [], share: 0 });
+  });
+});
+
+describe("classifyBySnippet — isolateScripts", () => {
+  const ROSTER = [uk, en, ru];
+  const ISOLATE = { isolateScripts: true } as const;
+  const RU_SHOP = "Самые дешевые в Украине | Victron Multiplus II 48V 6k5va";
+
+  it("off by default: a Latin majority with a lone candidate decides by script alone", () => {
+    expect(classifyBySnippet(RU_SHOP, ROSTER)).toMatchObject({
+      language: "en",
+      discriminating: false,
+    });
+  });
+
+  it.each([
+    ["ru", RU_SHOP],
+    ["ru", "Купить Apple iPhone 15 Pro Max 256GB Natural Titanium — цена, отзывы"],
+    ["uk", "Найдешевші в Україні | Victron Multiplus II 48V 6k5va"],
+    ["uk", "Купити Apple iPhone 15 Pro Max 256GB Natural Titanium — ціна, відгуки"],
+  ])("a discriminating Cyrillic minority decides (%s): %s", (language, text) => {
+    expect(classifyBySnippet(text, ROSTER, undefined, ISOLATE)).toMatchObject({
+      language,
+      discriminating: true,
+    });
+  });
+
+  it("a minority under MINORITY_MIN_LETTERS keeps the dominant verdict", () => {
+    const text = "Learn Russian: привет means hello";
+    expect("привет".length).toBeLessThan(MINORITY_MIN_LETTERS);
+    expect(classifyBySnippet(text, ROSTER, undefined, ISOLATE)).toEqual(
+      classifyBySnippet(text, ROSTER),
+    );
+  });
+
+  it("a quoted minority is someone else's words and keeps the dominant verdict", () => {
+    const text =
+      "Kherson residents mock the «Самые дешевые цены» banners left behind by the occupation chain stores";
+    expect(classifyBySnippet(text, ROSTER, undefined, ISOLATE)).toEqual(
+      classifyBySnippet(text, ROSTER),
+    );
+    // Unquoted, the same clause is the title's own and decides.
+    expect(classifyBySnippet(text.replace(/[«»]/g, ""), ROSTER, undefined, ISOLATE).language).toBe(
+      "ru",
+    );
+  });
+
+  it("a minority that abstains keeps the dominant verdict", () => {
+    // No distinctive letter or word in the Cyrillic span: rungs 1–2 abstain.
+    const text = "Видеокарта MSI GeForce RTX 4070 Ti SUPER 16G VENTUS 3X OC";
+    expect(classifyBySnippet(text, ROSTER, undefined, ISOLATE)).toEqual(
+      classifyBySnippet(text, ROSTER),
+    );
+  });
+
+  it("a minority the text contradicts keeps the dominant verdict", () => {
+    // Belarusian: `ў` is a letter neither uk nor ru has.
+    const text = "Танныя ў Беларусі сёння | Victron Multiplus II 48V 6k5va";
+    expect(classifyBySnippet(text, ROSTER, undefined, ISOLATE).language).not.toBe("ru");
+    expect(classifyBySnippet(text, ROSTER, undefined, ISOLATE).language).not.toBe("uk");
+  });
+
+  it("is a no-op when the minority holds a lone candidate", () => {
+    expect(classifyBySnippet(RU_SHOP, [en, ru], undefined, ISOLATE)).toEqual(
+      classifyBySnippet(RU_SHOP, [en, ru]),
+    );
+  });
+
+  it("is a no-op when the dominant script discriminates", () => {
+    const de: LanguageProfile = { code: "de", alphabet: "abcdefghijklmnopqrstuvwxyzäöüß" };
+    expect(classifyBySnippet(RU_SHOP, [uk, en, de, ru], undefined, ISOLATE)).toEqual(
+      classifyBySnippet(RU_SHOP, [uk, en, de, ru]),
+    );
+    const cyrillicMajority = "Найкращі ціни на зарядні станції — EcoFlow";
+    expect(classifyBySnippet(cyrillicMajority, ROSTER, undefined, ISOLATE)).toEqual(
+      classifyBySnippet(cyrillicMajority, ROSTER),
+    );
+  });
+
+  it("hands rung 3 only the scope's own script", () => {
+    const seen: string[] = [];
+    const rung3 = (text: string) => {
+      seen.push(text);
+      return null;
+    };
+    classifyBySnippet("Interview with Володимир Зеленський on CNN", ROSTER, rung3, ISOLATE);
+    expect(seen).toEqual(["Володимир Зеленський"]);
+    // Off by default: the resolver sees the whole cleaned string.
+    seen.length = 0;
+    classifyBySnippet("Interview with Володимир Зеленський on CNN", ROSTER, rung3);
+    expect(seen).toEqual(["Interview with Володимир Зеленський on CNN"]);
+  });
+});
+
+describe("textInScope", () => {
+  it("passes single-script text through unchanged", () => {
+    const text = "Обзор нового смартфона — подробное сравнение, 2026!";
+    expect(textInScope(text, [uk, ru])).toBe(text);
+  });
+
+  it("keeps the scope's words, apostrophes and hyphens, and drops the other script", () => {
+    expect(textInScope("П'ять речей про Victron MultiPlus-II 48/5000 — Най-краще", [uk, ru])).toBe(
+      "П'ять речей про Най-краще",
+    );
+    expect(textInScope("Victron MultiPlus-II — огляд", [en])).toBe("Victron MultiPlus-II");
+  });
+
+  it("returns the text unchanged for an empty scope", () => {
+    expect(textInScope("abc где", [])).toBe("abc где");
   });
 });

@@ -116,6 +116,28 @@ classifyBySnippet("Мова і культура Беларусі маюць ба
 // → { language: "be", … }        widen the roster and the text stops arguing
 ```
 
+#### Mixed scripts: judge each script on its own evidence (opt-in)
+
+The classifier scopes to the text's dominant script by letter count. In the default
+behaviour, a title whose Latin product name outweighs its Cyrillic clause is decided
+by the lone Latin candidate. That candidate can't lose, so its win says only which
+script had more letters. `isolateScripts` changes that:
+
+```ts
+const title = "Самые дешевые в Украине | Victron Multiplus II 48V 6k5va";
+classifyBySnippet(title, [uk, en, ru]);
+// → { language: "en", discriminating: false, … }   22 Latin letters outvote 20 Cyrillic
+classifyBySnippet(title, [uk, en, ru], undefined, { isolateScripts: true });
+// → { language: "ru", rung: 1, discriminating: true, … }
+```
+
+With it on, a minority script that holds ≥2 candidates and at least
+`MINORITY_MIN_LETTERS` letters is classified on its own (rungs 1–2) when the
+dominant script holds only one. The rung-3 resolver also receives only the scope's
+own script (`textInScope`), so Latin letters can't lift a short Cyrillic name over a
+trigram length floor. `compile({ isolateScripts: true })` and
+`createFrancEngine(candidates, { isolateScripts: true })` forward the same option.
+
 The measurement is exported too, for callers that have to _explain_ a verdict
 rather than only act on it. Derive the text's own alphabet once, then ask each
 candidate to account for it:

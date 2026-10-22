@@ -96,6 +96,36 @@ export type ScriptName = "cyrillic" | "latin";
 /** Below this length, trigrams are too noisy to justify a rung-3 verdict. */
 export const RUNG3_MIN_LENGTH = 24;
 
+/** Under {@link ClassifyOptions.isolateScripts}, the fewest letters a minority
+ *  script must carry before it is classified on its own. A quoted word
+ *  («привет») stays below it; a clause («Самые дешевые») clears it. */
+export const MINORITY_MIN_LETTERS = 8;
+
+/** Options for {@link classifyBySnippet}. */
+export interface ClassifyOptions {
+  /**
+   * Judge each script on its own evidence. Off by default; when on:
+   *
+   * - **A discriminating minority beats a non-discriminating majority.** When
+   *   the dominant script holds a lone candidate (its win is decided by script
+   *   alone, not evidence) and another script in the text holds ≥2 candidates
+   *   and at least {@link MINORITY_MIN_LETTERS} letters, that script's span is
+   *   classified on its own with rungs 1–2. A verdict there is returned; an
+   *   abstention falls back to the dominant-script verdict unchanged. Rung 3
+   *   never runs on the minority span — it is short by construction, and short
+   *   spans are where trigrams misread.
+   * - **The rung-3 resolver reads only the scope's own script** (see
+   *   {@link textInScope}), so another script's letters can't lift a short span
+   *   over a resolver's length floor nor add noise to its trigrams.
+   *
+   * Without this, «Самые дешевые в Украине | Victron Multiplus II 48V 6k5va»
+   * resolves to the lone Latin candidate (22 Latin letters outvote 20
+   * Cyrillic), and «Interview with Володимир Зеленський on CNN» reaches a
+   * trigram backstop on 42 characters when its Cyrillic is a 20-character name.
+   */
+  isolateScripts?: boolean;
+}
+
 /** The script most of `text` is written in, or `null` if it carries no letters.
  *  Noise (URLs/handles/hashtags) is stripped first so a single trailing link
  *  can't flip a multi-word Cyrillic title's vote to Latin. */
@@ -108,6 +138,61 @@ function dominantScript(text: string): "cyrillic" | "latin" | null {
   }
   if (cyr === 0 && lat === 0) return null;
   return cyr >= lat ? "cyrillic" : "latin";
+}
+
+const SCRIPT_RE: Record<ScriptName, RegExp> = { cyrillic: CYRILLIC_RE, latin: LATIN_RE };
+const OTHER_SCRIPT: Record<ScriptName, ScriptName> = { cyrillic: "latin", latin: "cyrillic" };
+
+/** Word runs carrying at least one letter of the script, with the marks,
+ *  apostrophes and hyphens that spell words inside it (`п'ять`, `Най-евтините`). */
+const SCRIPT_WORD_RE: Record<ScriptName, RegExp> = {
+  cyrillic: /[\p{Script=Cyrillic}\p{M}'ʼ’-]*\p{Script=Cyrillic}[\p{Script=Cyrillic}\p{M}'ʼ’-]*/gu,
+  latin: /[\p{Script=Latin}\p{M}'’-]*\p{Script=Latin}[\p{Script=Latin}\p{M}'’-]*/gu,
+};
+
+/** The text's words in one script, space-joined. */
+function scriptSpan(text: string, script: ScriptName): string {
+  return (text.match(SCRIPT_WORD_RE[script]) ?? []).join(" ");
+}
+
+function countLetters(text: string, script: ScriptName): number {
+  let n = 0;
+  for (const ch of text) if (SCRIPT_RE[script].test(ch)) n += 1;
+  return n;
+}
+
+/**
+ * The part of `text` a scope can be judged on: its words in the scope's script,
+ * when the text also carries letters of another script; otherwise `text`
+ * unchanged.
+ *
+ * What a rung-3 resolver receives under {@link ClassifyOptions.isolateScripts}.
+ * Exported so an off-path resolver (an oracle over raw candidates) feeds its
+ * backstop exactly what the classifier would. Single-script text is passed
+ * through byte-for-byte: rewriting it (dropping punctuation and digits) would
+ * shift trigram scores on the common case for no gain.
+ */
+export function textInScope(text: string, scoped: readonly LanguageProfile[]): string {
+  const first = scoped[0];
+  const script = first === undefined ? null : scriptOfProfile(first);
+  if (script === null) return text;
+  if (!SCRIPT_RE[OTHER_SCRIPT[script]].test(text)) return text;
+  return scriptSpan(text, script);
+}
+
+/** Candidates in one script, one per code (see {@link scopeCandidates}). */
+function candidatesIn<P extends LanguageProfile>(
+  candidates: readonly P[],
+  script: ScriptName,
+): P[] {
+  const seen = new Set<string>();
+  const out: P[] = [];
+  for (const c of candidates) {
+    if (scriptOfProfile(c) !== script || seen.has(c.code)) continue;
+    seen.add(c.code);
+    out.push(c);
+  }
+  return out;
 }
 
 /** The script a profile's alphabet is written in, or `null` if it carries no
@@ -135,14 +220,7 @@ export function scopeCandidates<P extends LanguageProfile>(
   // Keep one profile per code. A language listed twice would otherwise make its
   // own distinctive chars/words read as "owned by ≥2 candidates" in `tally`,
   // cancelling them out and collapsing the verdict to "unknown".
-  const seen = new Set<string>();
-  const scoped: P[] = [];
-  for (const c of candidates) {
-    if (scriptOfProfile(c) !== script || seen.has(c.code)) continue;
-    seen.add(c.code);
-    scoped.push(c);
-  }
-  return scoped;
+  return candidatesIn(candidates, script);
 }
 
 /**
@@ -386,11 +464,15 @@ function wordRung(
  * with no adapter — the resolver sees exactly the profiles the caller passed.
  * `P` defaults to {@link LanguageProfile}, so the bare two-argument form and
  * every existing call site are unchanged.
+ *
+ * `options` opts into behavior that is off by default — see
+ * {@link ClassifyOptions}.
  */
 export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
   text: string,
   candidates: readonly P[],
   rung3?: Rung3Resolver<P>,
+  options: ClassifyOptions = {},
 ): SnippetVerdict {
   if (!text || candidates.length === 0) return UNKNOWN;
 
@@ -406,6 +488,11 @@ export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
   // choice to make; a lone scoped candidate wins by script alone. Stamped onto
   // whichever rung decides — a single rung can't see the scope size.
   const discriminating = scoped.length >= 2;
+
+  if (options.isolateScripts && !discriminating) {
+    const minority = minorityVerdict(cleaned, candidates, scoped);
+    if (minority) return minority;
+  }
 
   /**
    * A winner the text itself argues against is no winner — see
@@ -444,6 +531,41 @@ export function classifyBySnippet<P extends LanguageProfile = LanguageProfile>(
   const byWord =
     wordRung(tokens, scoped, "function", "2a") ??
     wordRung(tokens, scoped, "frequent", "2b") ??
-    rung3?.(cleaned, scoped);
+    rung3?.(options.isolateScripts ? textInScope(cleaned, scoped) : cleaned, scoped);
   return byWord ? settle(byWord) : UNKNOWN;
+}
+
+/**
+ * Under {@link ClassifyOptions.isolateScripts}: the verdict of a minority
+ * script that can actually choose between candidates, when the dominant one
+ * cannot. Rungs 1–2 over that script's unquoted span, with the same
+ * contradiction veto;
+ * `null` when the span is too short, holds fewer than two candidates, or
+ * abstains — the caller then keeps the dominant-script verdict.
+ */
+function minorityVerdict(
+  cleaned: string,
+  candidates: readonly LanguageProfile[],
+  dominant: readonly LanguageProfile[],
+): SnippetVerdict | null {
+  const first = dominant[0];
+  const dominantScriptName = first === undefined ? null : scriptOfProfile(first);
+  if (dominantScriptName === null) return null;
+  const script = OTHER_SCRIPT[dominantScriptName];
+  const scoped = candidatesIn(candidates, script);
+  if (scoped.length < 2) return null;
+  // Quotations are someone else's words: an English title quoting a Russian
+  // slogan is not a Russian title (see {@link stripQuoted}).
+  const span = scriptSpan(stripQuoted(cleaned), script);
+  if (countLetters(span, script) < MINORITY_MIN_LETTERS) return null;
+
+  const verdict =
+    letterRung(span, scoped) ??
+    wordRung(tokenize(span), scoped, "function", "2a") ??
+    wordRung(tokenize(span), scoped, "frequent", "2b");
+  if (!verdict) return null;
+  const winner = scoped.find((c) => c.code === verdict.language);
+  const alphabet = alphabetOfScrubbed(stripQuoted(cleaned));
+  if (winner && contradictionOf(alphabet, winner).share >= CONTRADICTION_SHARE) return null;
+  return { ...verdict, discriminating: true };
 }
