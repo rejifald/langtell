@@ -24,13 +24,14 @@ import type {
 function builtIns(
   candidates: readonly LanguageProfile[] | undefined,
   nodeLangAttributes: readonly string[],
+  isolateScripts: boolean,
 ): SyncSource[] {
   return [
     {
       id: "text",
       sync: true,
       inputs: ["text"],
-      detect: (i) => evidenceFromText(i.text, candidates),
+      detect: (i) => evidenceFromText(i.text, candidates, undefined, { isolateScripts }),
     },
     { id: "html", sync: true, inputs: ["html"], detect: (i) => evidenceFromHtml(i.html) },
     {
@@ -67,7 +68,11 @@ export function compile<const E extends readonly EvidenceSource[] = []>(
   config: DetectorConfig<E> = {},
 ): DetectFn<E> {
   const sources: EvidenceSource[] = [
-    ...builtIns(config.candidates, config.nodeLangAttributes ?? DEFAULT_NODE_LANG_ATTRIBUTES),
+    ...builtIns(
+      config.candidates,
+      config.nodeLangAttributes ?? DEFAULT_NODE_LANG_ATTRIBUTES,
+      config.isolateScripts ?? false,
+    ),
     ...(config.engines ?? []),
   ];
   const hasAsync = sources.some((source) => !source.sync);

@@ -3,12 +3,12 @@
     "name": "core \u2014 compile() (proves zero franc bytes)",
     "path": "dist/index.js",
     "import": "{ compile }",
-    "limit": "3.35 kB"
+    "limit": "3.7 kB"
   },
   {
     "name": "core \u2014 all named exports",
     "path": "dist/index.js",
-    "limit": "3.35 kB"
+    "limit": "3.7 kB"
   },
   {
     "name": "headers producer",

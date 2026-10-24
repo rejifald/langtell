@@ -14,7 +14,7 @@
  */
 import { francAll } from "franc";
 import type { LanguageEvidence, LanguageProfile, SyncSource } from "./types.js";
-import { scopeCandidates } from "./internal/classify.js";
+import { scopeCandidates, textInScope, type ClassifyOptions } from "./internal/classify.js";
 
 /** Minimum sample length, in characters. Below this trigrams are too noisy. */
 const RUNG_MIN_LENGTH = 24;
@@ -52,12 +52,17 @@ function francScore(
 export function evidenceFromFranc(
   text: string | undefined,
   candidates: readonly LanguageProfile[] | undefined,
+  options: Pick<ClassifyOptions, "isolateScripts"> = {},
 ): LanguageEvidence[] {
   if (text === undefined || text.trim().length < RUNG_MIN_LENGTH) return [];
   if (candidates === undefined || candidates.length === 0) return [];
 
   const scoped = scopeCandidates(text, candidates);
-  const scored = francScore(text, scoped);
+  // Under `isolateScripts`, franc reads only the scope's own script, and the
+  // length floor is measured on what it reads (see `textInScope`).
+  const sample = options.isolateScripts ? textInScope(text, scoped) : text;
+  if (sample.trim().length < RUNG_MIN_LENGTH) return [];
+  const scored = francScore(sample, scoped);
   if (scored === null) return [];
 
   return [
@@ -81,12 +86,15 @@ export function evidenceFromFranc(
  * A `SyncSource` (not async): franc runs in-process and synchronously, so the
  * compiled `detect` stays synchronous — no `await` ceremony on the hot path.
  */
-export function createFrancEngine(candidates: readonly LanguageProfile[]): SyncSource {
+export function createFrancEngine(
+  candidates: readonly LanguageProfile[],
+  options: Pick<ClassifyOptions, "isolateScripts"> = {},
+): SyncSource {
   return {
     id: "franc",
     sync: true,
     inputs: ["text"],
-    detect: (input) => evidenceFromFranc(input.text, candidates),
+    detect: (input) => evidenceFromFranc(input.text, candidates, options),
   };
 }
 

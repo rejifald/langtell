@@ -48,11 +48,14 @@ export {
   CONTRADICTION_SHARE,
   contradictionOf,
   FRANC_RUNG,
+  MINORITY_MIN_LETTERS,
   RUNG3_MIN_LENGTH,
   scopeCandidates,
   textAlphabet,
+  textInScope,
 } from "./internal/classify.js";
 export type {
+  ClassifyOptions,
   Contradiction,
   Rung,
   Rung3Resolver,
